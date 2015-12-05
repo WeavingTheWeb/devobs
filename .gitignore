@@ -2,6 +2,9 @@
 .vagrant
 .bowerrc
 
+# Packer
+packer_cache
+
 # Continuous integration reports
 /build/*
 !/build/.gitignore

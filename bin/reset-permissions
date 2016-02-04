@@ -1,0 +1,15 @@
+#!/bin/bash
+
+VAGRANT_LOG=error
+
+target_dir=/var/deploy/devobs/releases/master
+cache_logs=$target_dir'/app/{logs,cache}'
+components=$target_dir'/src/WeavingTheWeb/Bundle/DashboardBundle/Resources/config/bower/../../public/components'
+sessions=$target_dir'/app/var/sessions'
+web=$target_dir'/web'
+current='/var/deploy/devobs/current'
+perspectives=$current'/src/WeavingTheWeb/Bundle/DashboardBundle/Resources/perspectives'
+
+vagrant ssh -c 'sudo chmod -R 777 '"$cache_logs"' '"$components"' '"$sessions"' '"$current"' '"$perspectives"' '"$web"' && \
+echo "All permissions set"'
+

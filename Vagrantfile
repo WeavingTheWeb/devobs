@@ -8,32 +8,44 @@
 #to use the Vagrant Cloud and other newer Vagrant features.
 Vagrant.require_version '>= 1.5'
 
-IP_ADDRESS = '10.9.8.2'
-
 box_name='devobs'
 if ENV.key?('BOX_NAME')
     box_name = ENV['BOX_NAME']
 end
 
-# Check to determine whether we're on a windows or linux/os-x host,
-# later on we use this to launch ansible in the supported way
-# source: https://stackoverflow.com/questions/2108727/which-in-ruby-checking-if-program-exists-in-path-from-ruby
-def which(cmd)
-    exts = ENV['PATHEXT'] ? ENV['PATHEXT'].split(';') : ['']
-    ENV['PATH'].split(File::PATH_SEPARATOR).each do |path|
-        exts.each { |ext|
-            exe = File.join(path, "#{cmd}#{ext}")
-            return exe if File.executable? exe
-        }
-    end
-    return nil
-end
-
-COMPOSER_AUTH = ENV['COMPOSER_AUTH'] ? ENV['COMPOSER_AUTH'] : nil
-MANUAL_PROVISION = ENV['MANUAL_PROVISION'] ? true : false
-MANUAL_PUSH = ENV['MANUAL_PUSH'] ? true : false
-
 Vagrant.configure('2') do |config|
+    IP_ADDRESS = '10.9.8.2'
+
+    if ENV.key?('USE_NFS')
+        use_nfs = ENV['USE_NFS']
+    elsif ENV.key?('USE_RSYNC')
+        use_rsync = ENV['USE_RSYNC']
+    end
+
+    if ENV.key?('BOX_NAME')
+        box_name = ENV['BOX_NAME']
+    else
+        box_name = 'devobs'
+    end
+
+    # Check to determine whether we're on a windows or linux/os-x host,
+    # later on we use this to launch ansible in the supported way
+    # source: https://stackoverflow.com/questions/2108727/which-in-ruby-checking-if-program-exists-in-path-from-ruby
+    def which(cmd)
+        exts = ENV['PATHEXT'] ? ENV['PATHEXT'].split(';') : ['']
+        ENV['PATH'].split(File::PATH_SEPARATOR).each do |path|
+            exts.each { |ext|
+                exe = File.join(path, "#{cmd}#{ext}")
+                return exe if File.executable? exe
+            }
+        end
+        return nil
+    end
+
+    COMPOSER_AUTH = ENV['COMPOSER_AUTH'] ? ENV['COMPOSER_AUTH'] : nil
+    MANUAL_PROVISION = ENV['MANUAL_PROVISION'] ? true : false
+    MANUAL_PUSH = ENV['MANUAL_PUSH'] ? true : false
+
     if MANUAL_PUSH
         config.push.define 'atlas' do |push|
             push.app = 'weaving-the-web/devobs-development'
@@ -86,7 +98,7 @@ Vagrant.configure('2') do |config|
         use_rsync = ENV['USE_RSYNC']
     end
 
-    synced_folder = '/var/www/master'
+    synced_folder = '/var/deploy/devobs/releases/master'
     if use_nfs
         config.vm.synced_folder '.', synced_folder,
             type: 'nfs',
@@ -97,6 +109,11 @@ Vagrant.configure('2') do |config|
             type: 'rsync',
             rsync__exclude: ['.git/', 'parameters.yml', 'vendor/devobs', 'web/bundles']
     end
+
+    config.vm.synced_folder '.', '/vagrant',
+        type: 'nfs',
+        map_uid: Process.uid,
+        map_gid: Process.gid
 
     if COMPOSER_AUTH
         config.vm.provision 'file', source: COMPOSER_AUTH, destination: '~/.composer/auth.json'

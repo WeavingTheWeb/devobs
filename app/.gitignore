@@ -1,9 +1,9 @@
-
 *.xml
 bootstrap.php.cache
 cache
 config/*.yml
 logs
+check.php
 SymfonyRequirements.php
 
 # sessions

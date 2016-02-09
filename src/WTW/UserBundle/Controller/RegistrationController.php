@@ -75,7 +75,7 @@ class RegistrationController extends BaseController
 
         return array_merge(
             $loginFormParameters, [
-                'form' => $form,
+                'form' => $form->createView(),
                 'exceptions' => $exceptions
             ]
         );

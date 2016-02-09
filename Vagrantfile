@@ -107,7 +107,7 @@ Vagrant.configure('2') do |config|
     elsif use_rsync
         config.vm.synced_folder '.', synced_folder,
             type: 'rsync',
-            rsync__exclude: ['.git/', 'parameters.yml', 'vendor/devobs', 'web/bundles']
+            rsync__exclude: ['.git/', 'app/cache', 'app/logs', 'parameters.yml', 'vendor/devobs', 'web/bundles']
     end
 
     config.vm.synced_folder '.', '/vagrant',

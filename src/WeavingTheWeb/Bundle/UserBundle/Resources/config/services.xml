@@ -25,9 +25,10 @@
             <argument type="service" id="security.encoder_factory" />
             <argument type="service" id="fos_user.util.username_canonicalizer" />
             <argument type="service" id="fos_user.util.email_canonicalizer" />
-            <argument type="service" id="fos_user.entity_manager" />
+            <argument type="service" id="fos_user.object_manager" />
             <argument>%weaving_the_web_user.model.user.class%</argument>
         </service>
+        <service id="fos_user.doctrine_registry" alias="doctrine" />
         <service id="weaving_the_web_user.twitter" class="%weaving_the_web_user.twitter.class%">
             <argument type="service" id="session" />
             <call method="setApiAccessor">

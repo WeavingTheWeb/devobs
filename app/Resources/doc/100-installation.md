@@ -237,3 +237,21 @@ One has to erase the `current` directory
 ```
 vagrant ssh -c "sudo rm -rf /var/deploy/devobs/current"
 ```
+
+**How to generate bootstrap.php.cache?**
+
+Whenever encountering the following message in Apache error log files
+
+```
+FastCGI: server "/fcgi-bin-php5-fpm-devobs" stderr: PHP message: PHP Warning:
+require_once(/var/deploy/devobs/releases/master/web/../app/bootstrap.php.cache):
+failed to open stream
+```
+
+Consider reinstalling the dependencies using composer
+
+```
+vagrant ssh -c 'cd /var/deploy/devobs/releases/master && composer install'
+```
+
+Input GitHub token as stored in `provisioning/files/auth.json`

@@ -285,3 +285,13 @@ vagrant ssh -c 'cd /var/deploy/devobs/releases/master && \
 source /var/deploy/devobs/releases/master/bin/export-config-parameters && \
 app/console cache:clear -e prod'
 ```
+
+**How to serve the project host directory using NFS after first deploy into vagrant box?**
+
+```
+# Remove the "current" directory
+vagrant ssh -c 'cd /var/deploy/devobs && sudo rm current'
+
+# Link the project directory shared as master
+vagrant ssh -c 'cd /var/deploy/devobs && ln -s `pwd`/releases/staging current'
+```

@@ -89,7 +89,7 @@ Vagrant.configure('2') do |config|
         use_rsync = ENV['USE_RSYNC']
     end
 
-    synced_folder = '/var/deploy/devobs/releases/master'
+    synced_folder = '/var/deploy/devobs/releases/staging'
     if use_nfs
         config.vm.synced_folder '.', synced_folder,
             type: 'nfs',

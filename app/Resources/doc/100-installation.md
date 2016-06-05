@@ -265,3 +265,23 @@ composer install --prefer-dist'
 ```
 
 Input GitHub token as stored in `provisioning/files/auth.json`
+
+**How to fix uncaught `ParameterNotFoundException` exception?**
+
+Whenever encountering the following error in Apache error log files
+
+```
+PHP message: PHP Fatal error:
+Uncaught exception 'Symfony\\Component\\DependencyInjection\\Exception\\ParameterNotFoundException'
+with message 'You have requested a non-existent parameter "framework.secret".
+Did you mean this: "framework_secret"?' in
+/var/deploy/devobs/releases/master/vendor/symfony/symfony/src/Symfony/Component/DependencyInjection/ParameterBag/ParameterBag.php:106
+```
+
+Consider clearing the cache files for the `prod` environment
+
+```
+vagrant ssh -c 'cd /var/deploy/devobs/releases/master && \
+source /var/deploy/devobs/releases/master/bin/export-config-parameters && \
+app/console cache:clear -e prod'
+```

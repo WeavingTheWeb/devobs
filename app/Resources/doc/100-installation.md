@@ -251,7 +251,17 @@ failed to open stream
 Consider reinstalling the dependencies using composer
 
 ```
-vagrant ssh -c 'cd /var/deploy/devobs/releases/master && composer install --prefer-dist'
+# Copy parameters
+cp app/config/parameters.yml{.dist,}
+
+# Install JavaScript dependencies
+vagrant ssh -c 'cd /var/deploy/devobs/releases/master && \
+npm install'
+
+# Install PHP dependencies
+vagrant ssh -c 'cd /var/deploy/devobs/releases/master && \
+source /var/deploy/devobs/releases/master/bin/export-config-parameters && \
+composer install --prefer-dist'
 ```
 
 Input GitHub token as stored in `provisioning/files/auth.json`

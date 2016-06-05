@@ -8,25 +8,7 @@
 #to use the Vagrant Cloud and other newer Vagrant features.
 Vagrant.require_version '>= 1.5'
 
-box_name='devobs'
-if ENV.key?('BOX_NAME')
-    box_name = ENV['BOX_NAME']
-end
-
 Vagrant.configure('2') do |config|
-    IP_ADDRESS = '10.9.8.2'
-
-    if ENV.key?('USE_NFS')
-        use_nfs = ENV['USE_NFS']
-    elsif ENV.key?('USE_RSYNC')
-        use_rsync = ENV['USE_RSYNC']
-    end
-
-    if ENV.key?('BOX_NAME')
-        box_name = ENV['BOX_NAME']
-    else
-        box_name = 'devobs'
-    end
 
     # Check to determine whether we're on a windows or linux/os-x host,
     # later on we use this to launch ansible in the supported way
@@ -56,7 +38,16 @@ Vagrant.configure('2') do |config|
     config.ssh.forward_agent = true
 
     config.vm.box = 'weaving-the-web/devobs-development'
+
+    IP_ADDRESS = '10.9.8.2'
     config.vm.network 'private_network', ip: IP_ADDRESS
+
+    if ENV.key?('BOX_NAME')
+        box_name = ENV['BOX_NAME']
+    else
+        box_name = 'devobs'
+    end
+
     config.vm.provider :virtualbox do |v|
         v.name = box_name
         v.customize [

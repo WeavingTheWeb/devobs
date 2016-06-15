@@ -32,11 +32,7 @@ class SettingsControllerTest extends WebTestCase
         /**
          * @var \Symfony\Component\BrowserKit\Client $client
          */
-        $this->client = $this->setupAuthenticatedClient([
-            'follow_redirects' => true,
-            'user' => ['user_name' => 'User', 'password' => 'WN6!e1SfH92#8zbB#nnGKlrxHr*ounQJB^sML!Rb44Cs3I!Q^n']
-        ]);
-
+        $this->client = $this->setupAuthenticatedClient(['follow_redirects' => true]);
         $this->router = $this->getService('router');
     }
 

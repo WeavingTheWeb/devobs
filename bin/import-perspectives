@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# Execute import perspectives command
+import_perspectives='sudo -E -uwww-data php app/console wtw:das:per:imp'
+
+# Export configuration parameters
+export_config_parameters='source bin/export-config-parameters'
+
+# Change current directory to checked out project master branch
+change_directory='cd /var/deploy/devobs/releases/master'
+
+vagrant_command="$change_directory && $export_config_parameters && $import_perspectives"
+
+echo 'Executing the folowing command: '"$vagrant_command"
+VAGRANT_LOG=error vagrant ssh -c "$vagrant_command"

@@ -8,6 +8,7 @@
   notify: restart apache
   with_items:
     - actions
+    - env
     - rewrite
     - vhost_alias
     - headers

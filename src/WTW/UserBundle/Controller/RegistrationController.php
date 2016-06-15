@@ -18,6 +18,8 @@ use Symfony\Component\Security\Core\SecurityContext;
 use Symfony\Component\Form\FormError,
     Symfony\Component\Form\FormInterface;
 
+use Symfony\Component\Security\Core\User\UserInterface;
+
 use Symfony\Component\Validator\Constraints\Email;
 
 use Sensio\Bundle\FrameworkExtraBundle\Configuration as Extra;
@@ -75,7 +77,7 @@ class RegistrationController extends BaseController
 
         return array_merge(
             $loginFormParameters, [
-                'form' => $form,
+                'form' => $form->createView(),
                 'exceptions' => $exceptions
             ]
         );
@@ -132,7 +134,7 @@ class RegistrationController extends BaseController
      *
      * @return RedirectResponse
      */
-    protected function getRegistrationFormResponse(Request $request, $form, $user)
+    protected function getRegistrationFormResponse(Request $request, FormInterface $form, UserInterface $user)
     {
         $response = null;
 

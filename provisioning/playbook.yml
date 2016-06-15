@@ -10,7 +10,8 @@
       git_version: "2.1.0"
     - server
     - vagrant_local
-    - apache
+    - role: apache
+      tags: apache
     - varnish
     - role: mysql
       tags: mysql

@@ -237,3 +237,62 @@ One has to erase the `current` directory
 ```
 vagrant ssh -c "sudo rm -rf /var/deploy/devobs/current"
 ```
+
+**How to serve the project host directory using NFS after first deploy into vagrant box?**
+
+```
+# Remove the "current" directory
+vagrant ssh -c 'cd /var/deploy/devobs && sudo rm current'
+
+# Link the project directory shared as staging
+vagrant ssh -c 'cd /var/deploy/devobs && ln -s `pwd`/releases/staging current'
+```
+
+**How to generate bootstrap.php.cache?**
+
+Whenever encountering the following message in Apache error log files
+
+```
+FastCGI: server "/fcgi-bin-php5-fpm-devobs" stderr: PHP message: PHP Warning:
+require_once(/var/deploy/devobs/releases/staging/web/../app/bootstrap.php.cache):
+failed to open stream
+```
+
+Consider reinstalling the dependencies using composer
+
+```
+# Copy parameters
+cp app/config/parameters.yml{.dist,}
+
+# Install JavaScript dependencies
+vagrant ssh -c 'cd /var/deploy/devobs/releases/staging && \
+npm install'
+
+# Install PHP dependencies
+vagrant ssh -c 'cd /var/deploy/devobs/releases/staging && \
+source /var/deploy/devobs/releases/staging/bin/export-config-parameters && \
+composer install --prefer-dist'
+```
+
+Input GitHub token as stored in `provisioning/files/auth.json`
+
+**How to fix uncaught `ParameterNotFoundException` exception?**
+
+Whenever encountering the following error in Apache error log files
+
+```
+PHP message: PHP Fatal error:
+Uncaught exception 'Symfony\\Component\\DependencyInjection\\Exception\\ParameterNotFoundException'
+with message 'You have requested a non-existent parameter "framework.secret".
+Did you mean this: "framework_secret"?' in
+/var/deploy/devobs/releases/staging/vendor/symfony/symfony/src/Symfony/Component/DependencyInjection/ParameterBag/ParameterBag.php:106
+```
+
+Consider clearing the cache files for the `prod` environment
+
+```
+vagrant ssh -c 'cd /var/deploy/devobs/releases/staging && \
+source /var/deploy/devobs/releases/staging/bin/export-config-parameters && \
+app/console cache:clear -e prod'
+```
+

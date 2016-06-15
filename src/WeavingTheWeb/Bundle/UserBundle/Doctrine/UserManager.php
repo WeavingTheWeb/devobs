@@ -4,6 +4,7 @@ namespace WeavingTheWeb\Bundle\UserBundle\Doctrine;
 
 use FOS\UserBundle\Model\UserInterface,
     FOS\UserBundle\Doctrine\UserManager as BaseUserManager;
+use WeavingTheWeb\Bundle\UserBundle\Exception\InvalidRoleException;
 
 class UserManager extends BaseUserManager
 {
@@ -47,6 +48,10 @@ class UserManager extends BaseUserManager
         foreach ($roles as $role) {
             $roleName = (string) $role;
             $roleEntity = $roleRepository->findOneByRole($roleName);
+
+            if (is_null($roleEntity)) {
+                throw new InvalidRoleException(InvalidRoleException::MESSAGE);
+            }
 
             $user->removeRole($role);
             $user->addRole($roleEntity);

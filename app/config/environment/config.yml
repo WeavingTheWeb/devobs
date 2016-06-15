@@ -59,7 +59,6 @@ twig:
             statuses:       %feature_toggling_statuses%
 
 sensio_framework_extra:
-    view:    { annotations: false }
     router:  { annotations: true }
 
 oneup_uploader:

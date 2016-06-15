@@ -6,6 +6,11 @@ parameters:
         WeavingTheWebDashboardBundle: ~
         WeavingTheWebMappingBundle: ~
         WeavingTheWebUserBundle: ~
+        WeavingTheWebUserBundleTest:
+            dir: %kernel.root_dir%/../src/WeavingTheWeb/Bundle/UserBundle/Tests/Security/Core/User
+            prefix: WeavingTheWeb\Bundle\UserBundle\Tests\Security\Core\User
+            type: annotation
+            is_bundle: false
 
 # Doctrine Configuration
 doctrine:

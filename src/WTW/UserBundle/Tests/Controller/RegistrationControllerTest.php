@@ -13,6 +13,11 @@ class RegistrationControllerTest extends WebTestCase
 {
     protected $router;
 
+    public function requireSQLiteFixtures()
+    {
+        return true;
+    }
+
     public function setUp()
     {
         $this->client = $this->getClient();

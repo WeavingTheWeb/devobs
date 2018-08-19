@@ -34,6 +34,9 @@ remove-php-container: ## Remove PHP container
 run-php-script: ## Run PHP script
 		@/bin/bash -c 'source ./bin/functions.sh && run_php_script ${1}'
 
+install-php-dependencies: ## Install PHP dependencies
+		@/bin/bash -c 'source ./bin/functions.sh && install_php_dependencies'
+
 run-php: ## Run PHP with arguments
 		@/bin/bash -c 'source ./bin/functions.sh && run_php'
 
@@ -78,6 +81,9 @@ keep-php-container-running: ## Keep a running container having PHP
 
 consume-twitter-api-messages: ## Consume twitter API messages
 		@/bin/bash -c 'export PROJECT_DIR=`pwd` DOCKER_MODE=1 && cd "${PROJECT_DIR}" && source bin/consume_twitter_api.sh'
+
+consume-twitter-api-news-messages: ## Consume twitter API news messages
+		@/bin/bash -c 'export PROJECT_DIR=`pwd` DOCKER_MODE=1 && cd "${PROJECT_DIR}" && source bin/consume_twitter_api_for_news.sh'
 
 today-statuses: ## Filter the statuses for today from the log file
 		@/bin/bash -c 'source ./bin/functions.sh && today_statuses'

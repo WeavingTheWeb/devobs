@@ -2,14 +2,21 @@
 
 namespace WeavingTheWeb\Bundle\AmqpBundle\Command;
 
+use App\Operation\OperationClock;
+
+use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption,
     Symfony\Component\Console\Input\InputInterface,
     Symfony\Component\Console\Output\OutputInterface;
 
 use Symfony\Component\Translation\TranslatorInterface;
+
 use WeavingTheWeb\Bundle\AmqpBundle\Exception\InvalidListNameException;
+
 use WeavingTheWeb\Bundle\ApiBundle\Entity\Token;
+
 use WeavingTheWeb\Bundle\TwitterBundle\Exception\UnavailableResourceException;
+
 use WTW\UserBundle\Entity\User;
 
 /**
@@ -45,14 +52,29 @@ class ProduceListsMembersCommand extends AggregateAwareCommand
     private $listRestriction;
 
     /**
+     * @var array[string]
+     */
+    private $listCollectionRestriction;
+
+    /**
      * @var string
      */
     private $screenName;
 
     /**
+     * @var bool
+     */
+    private $givePriorityToAggregate = false;
+
+    /**
      * @var string
      */
     private $before = null;
+
+    /**
+     * @var OperationClock
+     */
+    public $operationClock;
 
     public function configure()
     {
@@ -79,6 +101,17 @@ class ProduceListsMembersCommand extends AggregateAwareCommand
             InputOption::VALUE_OPTIONAL,
             'A list to which production is restricted to'
         )->addOption(
+            'lists',
+                'l',
+            InputOption::VALUE_OPTIONAL,
+            'List to which publication of messages is restricted to'
+        )
+        ->addOption(
+            'priority_to_aggregates',
+            'pa',
+            InputOption::VALUE_NONE,
+            'Publish messages the priority queue for visible aggregates'
+        )->addOption(
             'before',
             null,
             InputOption::VALUE_OPTIONAL,
@@ -89,11 +122,21 @@ class ProduceListsMembersCommand extends AggregateAwareCommand
     /**
      * @param InputInterface  $input
      * @param OutputInterface $output
-     * @return int|null|void
-     * @throws \Exception
+     * @return int|null
+     * @throws InvalidListNameException
+     * @throws UnavailableResourceException
+     * @throws \Doctrine\ORM\NoResultException
+     * @throws \Doctrine\ORM\NonUniqueResultException
+     * @throws \Doctrine\ORM\OptimisticLockException
+     * @throws \WeavingTheWeb\Bundle\ApiBundle\Exception\InvalidTokenException
+     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\SuspendedAccountException
      */
     public function execute(InputInterface $input, OutputInterface $output)
     {
+        if ($this->operationClock->shouldSkipOperation()) {
+            return self::RETURN_STATUS_SUCCESS;
+        }
+
         $this->input = $input;
         $this->output = $output;
 
@@ -110,18 +153,30 @@ class ProduceListsMembersCommand extends AggregateAwareCommand
 
         $ownerships = $this->guardAgainstInvalidListName($ownerships);
 
-        $doNotApplyListRestriction = is_null($this->listRestriction);
+        $doNotApplyListRestriction = is_null($this->listRestriction) && count($this->listCollectionRestriction) === 0;
         if ($doNotApplyListRestriction && count($ownerships->lists) === 0) {
             $ownerships = $this->guardAgainstInvalidToken($ownerships);
         }
 
         foreach ($ownerships->lists as $list) {
-            if ($doNotApplyListRestriction || $list->name === $this->listRestriction) {
+            if ($doNotApplyListRestriction ||
+                $list->name === $this->listRestriction ||
+                array_key_exists($list->name, $this->listCollectionRestriction)
+            ) {
                 $members = $this->accessor->getListMembers($list->id);
 
-                if (!is_object($members) || !isset($members->users)) {
+                if (!is_object($members) || !isset($members->users) || count($members->users) === 0) {
                     $this->logger->info(sprintf('List "%s" has no members', $list->name));
                     continue;
+                }
+
+                if (count($members->users) > 0) {
+                    $this->logger->info(
+                        sprintf(
+                        'About to publish messages for members in list "%s"',
+                            $list->name
+                        )
+                    );
                 }
 
                 $publishedMessages = $this->publishMembersScreenNames($members, $messageBody, $list);
@@ -409,8 +464,13 @@ class ProduceListsMembersCommand extends AggregateAwareCommand
         $this->setUpLogger();
 
         $this->producer = $this->getContainer()->get('old_sound_rabbit_mq.weaving_the_web_amqp.twitter.user_status_producer');
+
         if (!is_null($this->listRestriction) && $this->listRestriction == 'news :: France') {
             $this->producer = $this->getContainer()->get('old_sound_rabbit_mq.weaving_the_web_amqp.twitter.news_status_producer');
+        }
+
+        if ((!is_null($this->listRestriction) || !is_null($this->listCollectionRestriction)) && $this->givePriorityToAggregate) {
+            $this->producer = $this->getContainer()->get('old_sound_rabbit_mq.weaving_the_web_amqp.twitter.aggregates_status_producer');
         }
 
         $this->translator = $this->getContainer()->get('translator');
@@ -483,8 +543,27 @@ class ProduceListsMembersCommand extends AggregateAwareCommand
             $this->listRestriction = $this->input->getOption('list');
         }
 
+        $this->listCollectionRestriction = [];
+        if ($this->input->hasOption('lists') && !is_null($this->input->getOption('lists'))) {
+            $this->listCollectionRestriction = explode(',', $this->input->getOption('lists'));
+            $restiction = (object)[];
+            $restiction->list = [];
+            array_walk(
+                $this->listCollectionRestriction,
+                function($list) use ($restiction) {
+                    $restiction->list[$list] = $list;
+                }
+            );
+            $this->listCollectionRestriction = $restiction->list;
+        }
+
         if ($this->input->hasOption('before') && !is_null($this->input->getOption('before'))) {
             $this->before = $this->input->getOption('before');
+        }
+
+        if ($this->input->hasOption('priority_to_aggregates') &&
+            $this->input->getOption('priority_to_aggregates')) {
+            $this->givePriorityToAggregate = true;
         }
     }
 

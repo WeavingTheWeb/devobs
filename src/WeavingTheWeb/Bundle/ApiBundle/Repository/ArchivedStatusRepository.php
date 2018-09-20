@@ -69,8 +69,12 @@ class ArchivedStatusRepository extends ResourceRepository
      * @throws \Doctrine\ORM\NonUniqueResultException
      * @throws \Exception
      */
-    public function saveStatuses($statuses, $identifier, Aggregate $aggregate = null, LoggerInterface $logger = null)
-    {
+    public function saveStatuses(
+        $statuses,
+        $identifier,
+        Aggregate $aggregate = null,
+        LoggerInterface $logger = null
+    ) {
         $this->logger = $logger;
 
         $entityManager = $this->getEntityManager();
@@ -96,6 +100,15 @@ class ArchivedStatusRepository extends ResourceRepository
             }
 
             try {
+                if ($memberStatus->getId()) {
+                    $memberStatus->setUpdatedAt(
+                        new \DateTime(
+                            'now',
+                            new \DateTimeZone('UTC')
+                        )
+                    );
+                }
+
                 $entityManager->persist($memberStatus);
             } catch (ORMException $exception) {
                 if ($exception->getMessage() === ORMException::entityManagerClosed()->getMessage()) {
@@ -124,6 +137,22 @@ class ArchivedStatusRepository extends ResourceRepository
     }
 
     /**
+     * @param int $id
+     * @return array
+     */
+    public function findStatusIdentifiedBy(int $id): array
+    {
+        $status = $this->findOneBy(['statusId' => $id]);
+        if (!($status instanceof StatusInterface)) {
+            return [];
+        }
+
+        $statusDocument = json_decode($status->getApiDocument());
+
+        return $this->extractProperties([$statusDocument], function ($properties) { return $properties; })[0];
+    }
+
+    /**
      * @param $statuses
      * @param $setter
      * @return array
@@ -133,10 +162,12 @@ class ArchivedStatusRepository extends ResourceRepository
         $extracts = [];
 
         foreach ($statuses as $status) {
-            if (property_exists($status, 'text')) {
+            if (property_exists($status, 'text') || property_exists($status, 'full_text')) {
+                $text = isset($status->full_text) ? $status->full_text : $status->text;
+
                 $extract = [
-                    'hash' => sha1($status->text . $status->id_str),
-                    'text' => $status->text,
+                    'hash' => sha1($text . $status->id_str),
+                    'text' => $text,
                     'screen_name' => $status->user->screen_name,
                     'name' => $status->user->name,
                     'user_avatar' => $status->user->profile_image_url,
@@ -308,19 +339,89 @@ class ArchivedStatusRepository extends ResourceRepository
     }
 
     /**
-     * @param $lastId
-     * @return array
+     * @param null $lastId
+     * @param null $aggregateName
+     * @param bool $rawSql
+     * @return mixed
      */
-    public function findLatest($lastId = null)
+    public function findLatest($lastId = null, $aggregateName = null, $rawSql = false)
     {
-        $queryBuilder = $this->selectStatuses();
+        if ($rawSql) {
+            return $this->findLatestForAggregate($aggregateName);
+        }
+
+        $queryBuilder = $this->selectStatuses($lastWeek = true);
 
         if (!is_null($lastId)) {
             $queryBuilder->andWhere('t.id < :lastId');
             $queryBuilder->setParameter('lastId', $lastId);
         }
 
+        if (!is_null($aggregateName)) {
+            $queryBuilder->join(
+                't.aggregates',
+                'a'
+            );
+            $queryBuilder->andWhere('a.name = :aggregate_name');
+            $queryBuilder->andWhere('a.screenName IS NOT NULL');
+            $queryBuilder->setParameter('aggregate_name', $aggregateName);
+        }
+
         $statuses = $queryBuilder->getQuery()->getResult();
+
+        return $this->highlightRetweets($statuses);
+    }
+
+    public function findLatestForAggregate($aggregateName = null)
+    {
+        $queryTemplate = <<<QUERY
+            SELECT
+            SQL_NO_CACHE
+            `status`.ust_avatar AS author_avatar,
+            `status`.ust_text AS text,
+            `status`.ust_full_name AS screen_name,
+            `status`.ust_id AS id,
+            `status`.ust_status_id AS status_id,
+            `status`.ust_starred AS starred,
+            `status`.ust_api_document AS original_document,
+            `status`.ust_created_at AS publication_date
+            FROM :status_table `status`
+            INNER JOIN (
+              SELECT status_id
+              FROM (
+                    SELECT sa.status_id
+                    FROM :aggregate_table aggregate
+                    LEFT JOIN weaving_status_aggregate sa ON (sa.aggregate_id = aggregate.id)
+                    WHERE 1
+                    AND NOT ISNULL(aggregate.screen_name)
+                    AND NOT ISNULL(aggregate.name)
+                    AND aggregate.name = ':aggregate'
+                    ORDER BY sa.status_id DESC
+              ) from_
+              ORDER BY from_.status_id DESC
+              LIMIT :max_results
+            ) aggregates_ ON (`status`.ust_id = aggregates_.status_id)
+            AND `status`.ust_created_at BETWEEN DATE_SUB(NOW(), INTERVAL 1 DAY) AND NOW()
+            ORDER BY ust_created_at DESC
+            LIMIT :max_results;
+QUERY
+;
+
+        $query = strtr(
+            $queryTemplate,
+            [
+                ':aggregate' => $aggregateName,
+                ':max_results' => 100,
+                ':status_table' => 'weaving_status',
+                ':aggregate_table' => 'weaving_aggregate',
+            ]
+        );
+
+        $statement = $this->createQueryBuilder('t')
+            ->getEntityManager()
+            ->getConnection()->executeQuery($query);
+
+        $statuses = $statement->fetchAll();
 
         return $this->highlightRetweets($statuses);
     }
@@ -329,7 +430,7 @@ class ArchivedStatusRepository extends ResourceRepository
      * @param bool $lastWeek
      * @return \Doctrine\ORM\QueryBuilder
      */
-    protected function selectStatuses($lastWeek = false)
+    protected function selectStatuses($lastWeek = true)
     {
         $queryBuilder = $this->createQueryBuilder('t');
         $queryBuilder->select(
@@ -343,17 +444,19 @@ class ArchivedStatusRepository extends ResourceRepository
                 't.apiDocument original_document'
             ]
         )
-            ->andWhere('t.identifier IN (:identifier)')
-            ->orderBy('t.id', 'desc')
+            ->orderBy('t.createdAt', 'desc')
             ->setMaxResults(300)
         ;
-        $queryBuilder->setParameter('identifier', $this->oauthTokens);
 
+        if (!empty($this->oauthTokens)) {
+            $queryBuilder->andWhere('t.identifier IN (:identifier)');
+            $queryBuilder->setParameter('identifier', $this->oauthTokens);
+        }
 
         if ($lastWeek) {
-            $queryBuilder->andWhere('ts.createdAt > :lastWeek');
+            $queryBuilder->andWhere('t.createdAt > :lastWeek');
 
-            $now = new \DateTime();
+            $now = new \DateTime('now', new \DateTimeZone('UTC'));
             $lastWeek = $now->setTimestamp(strtotime('last week'));
             $queryBuilder->setParameter('lastWeek', $lastWeek);
         }
@@ -446,7 +549,7 @@ class ArchivedStatusRepository extends ResourceRepository
         $memberStatus->setIdentifier($extract['identifier']);
 
         if (!is_null($aggregate)) {
-            $memberStatus->addToAggregate($aggregate);
+            $memberStatus->addToAggregates($aggregate);
         }
 
         return $memberStatus;
@@ -457,18 +560,10 @@ class ArchivedStatusRepository extends ResourceRepository
      */
     private function logStatus(StatusInterface $memberStatus): void
     {
-        $decodedApiResponse = json_decode($memberStatus->getApiDocument(), true);
-        $favoriteCount = 0;
-        $retweetCount = 0;
-        if (json_last_error() === JSON_ERROR_NONE) {
-            if (array_key_exists('favorite_count', $decodedApiResponse)) {
-                $favoriteCount = $decodedApiResponse['favorite_count'];
-            }
+        $reach = $this->extractReachOfStatus($memberStatus);
 
-            if (array_key_exists('retweet_count', $decodedApiResponse)) {
-                $retweetCount = $decodedApiResponse['retweet_count'];
-            }
-        }
+        $favoriteCount = $reach['favorite_count'];
+        $retweetCount = $reach['retweet_count'];
 
         $this->statusLogger->info(
             sprintf(
@@ -534,7 +629,7 @@ class ArchivedStatusRepository extends ResourceRepository
 
         if (!$memberStatus->getAggregates()->isEmpty()) {
             $memberStatus->getAggregates()->map(function (Aggregate $aggregate) use ($status) {
-                $status->addToAggregate($aggregate);
+                $status->addToAggregates($aggregate);
             });
         }
 
@@ -559,5 +654,31 @@ class ArchivedStatusRepository extends ResourceRepository
             }
         }
         return $aggregateName;
+    }
+
+    /**
+     * @param StatusInterface $memberStatus
+     * @return array
+     */
+    public function extractReachOfStatus(StatusInterface $memberStatus): array
+    {
+        $decodedApiResponse = json_decode($memberStatus->getApiDocument(), true);
+
+        $favoriteCount = 0;
+        $retweetCount = 0;
+        if (json_last_error() === JSON_ERROR_NONE) {
+            if (array_key_exists('favorite_count', $decodedApiResponse)) {
+                $favoriteCount = $decodedApiResponse['favorite_count'];
+            }
+
+            if (array_key_exists('retweet_count', $decodedApiResponse)) {
+                $retweetCount = $decodedApiResponse['retweet_count'];
+            }
+        }
+
+        return [
+            'favorite_count' => $favoriteCount,
+            'retweet_count' => $retweetCount
+        ];
     }
 }

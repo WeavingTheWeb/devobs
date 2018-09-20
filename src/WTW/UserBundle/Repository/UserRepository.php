@@ -232,15 +232,25 @@ class UserRepository extends EntityRepository
     public function incrementTotalStatusesOfMemberWithScreenName(int $statusesToBeAdded, string $screenName) {
         $member = $this->findOneBy(['twitter_username' => $screenName]);
         if (!$member instanceof User) {
-            throw new NotFoundMemberException(
-                'Could not find member with screen name "%s"',
-                $screenName
-            );
+            NotFoundMemberException::raiseExceptionAboutNotFoundMemberHavingScreenName($screenName);
         }
 
         $member->totalStatuses = $member->totalStatuses + $statusesToBeAdded;
         $this->saveMember($member);
 
         return $member;
+    }
+
+    /**
+     * @return mixed
+     * @throws \Doctrine\ORM\NoResultException
+     * @throws \Doctrine\ORM\NonUniqueResultException
+     */
+    public function getMemberHavingApiKey()
+    {
+        $queryBuilder = $this->createQueryBuilder('u');
+        $queryBuilder->andWhere('u.apiKey is not null');
+
+        return $queryBuilder->getQuery()->getSingleResult();
     }
 }

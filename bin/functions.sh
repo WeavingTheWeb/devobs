@@ -1,9 +1,27 @@
 #!/usr/bin/env bash
 
+function get_docker_network() {
+    echo 'press-review-network'
+}
+
+function create_network() {
+    local network=`get_docker_network`
+    /bin/bash -c 'docker network create '"${network}"
+}
+
+function get_network_option() {
+    network='--network '`get_docker_network`' '
+    if [ ! -z "${NO_DOCKER_NETWORK}" ];
+    then
+        network=''
+    fi
+
+    echo "${network}";
+}
+
 function kill_existing_consumers {
     local pids=(`ps ux | grep "rabbitmq:consumer" | grep -v '/bash' | grep -v grep | cut -d ' ' -f 2-3`)
     local totalProcesses=`ps ux | grep "rabbitmq:consumer" | grep -v grep | grep -c ''`
-
 
     if [ ! -z "${DOCKER_MODE}" ];
     then
@@ -118,6 +136,10 @@ function consume_amqp_messages_for_news_status {
     consume_amqp_messages 'news_status'
 }
 
+function consume_amqp_messages_for_aggregates_status {
+    consume_amqp_messages 'aggregates_status'
+}
+
 function execute_command () {
     local output_log="${1}"
     local error_log="${2}"
@@ -163,6 +185,11 @@ function get_project_dir {
     fi
 
     echo "${project_dir}"
+}
+
+function create_database_test_schema {
+    local project_dir="$(get_project_dir)"
+    echo 'php /var/www/devobs/app/console doctrine:schema:create -e test' | make run-php
 }
 
 function migrate_schema {
@@ -213,7 +240,7 @@ function run_mysql_container {
 
     local gateway=`ip -f inet addr  | grep docker0 -A1 | cut -d '/' -f 1 | grep inet | sed -e 's/inet//' -e 's/\s*//g'`
 
-    command="docker run -d -p"${gateway}":3306:3306 --name mysql -e MYSQL_DATABASE=${database_name} \
+    command="docker run --restart=always -d -p"${gateway}":3306:3306 --name mysql -e MYSQL_DATABASE=${database_name} \
         -e MYSQL_ROOT_PASSWORD="$(cat <(/bin/bash -c "${database_password}"))" \
         "${configuration_volume}"-v `pwd`/../../volumes/mysql:/var/lib/mysql \
         mysql:5.7"
@@ -257,12 +284,16 @@ function run_rabbitmq_container {
 
     local gateway=`ifconfig | grep docker0 -A1 | tail -n1 | awk '{print $2}' | sed -e 's/addr://'`
 
-    command="docker run -d -p"${gateway}":5672:5672 --name rabbitmq \
-        -e RABBITMQ_DEFAULT_USER=${rabbitmq_user} \
-        -e RABBITMQ_DEFAULT_PASS='""$(cat <(/bin/bash -c "${rabbitmq_password}"))""' \
-        -e RABBITMQ_DEFAULT_VHOST="${rabbitmq_vhost}" \
-        -v `pwd`/../../volumes/rabbitmq:/var/lib/rabbitmq \
-        rabbitmq:3.7-management"
+    local network=`get_network_option`
+    command="docker run -d -p"${gateway}":5672:5672 \
+    --name rabbitmq \
+    --restart=always \
+    --hostname rabbitmq ${network}\
+    -e RABBITMQ_DEFAULT_USER=${rabbitmq_user} \
+    -e RABBITMQ_DEFAULT_PASS='""$(cat <(/bin/bash -c "${rabbitmq_password}"))""' \
+    -e RABBITMQ_DEFAULT_VHOST="${rabbitmq_vhost}" \
+    -v `pwd`/../../volumes/rabbitmq:/var/lib/rabbitmq \
+    rabbitmq:3.7-management"
     echo "${command}"
 
     /bin/bash -c "${command}"
@@ -321,14 +352,72 @@ function list_amqp_queues() {
 }
 
 function setup_amqp_queue() {
-    local=`pwd`
-
     local project_dir="$(get_project_dir)"
     echo 'php '"${project_dir}"'/app/console rabbitmq:setup-fabric' | make run-php
 }
 function list_php_extensions() {
     remove_php_container
     docker run --name php php -m
+}
+
+function set_permissions_in_apache_container() {
+    local project_dir="$(get_project_dir)"
+    sudo rm -rf "${project_dir}"/app/cache
+    sudo mkdir "${project_dir}"/app/cache
+    sudo chown -R www-data "${project_dir}"/app/logs "${project_dir}"/app/var
+    docker exec -ti apache php app/console cache:clear -e prod --no-warmup
+}
+
+function build_apache_container() {
+    cd provisioning/containers/apache
+    docker build -t apache .
+}
+
+function remove_apache_container {
+    if [ `docker ps -a | grep apache -c` -eq 0 ]
+    then
+        return;
+    fi
+
+    docker ps -a | grep apache | awk '{print $1}' | xargs docker rm -f
+}
+
+function get_apache_container_interactive_shell() {
+    docker exec -ti apache bash
+}
+
+function run_apache() {
+    remove_apache_container
+
+    local port=80
+    if [ ! -z "${PRESS_REVIEW_APACHE_PORT}" ];
+    then
+        port="${PRESS_REVIEW_APACHE_PORT}"
+    fi
+
+    host host=''
+    if [ ! -z "${PRESS_REVIEW_APACHE_HOST}" ];
+    then
+        host="${PRESS_REVIEW_APACHE_HOST}"':'
+    fi
+
+    local symfony_environment="$(get_symfony_environment)"
+
+    local network=`get_network_option`
+    local command=$(echo -n 'docker run '"${network}"' \
+--restart=always \
+-d -p '${host}''${port}':80 \
+-e '"${symfony_environment}"' \
+-v '`pwd`'/provisioning/containers/apache/templates:/templates \
+-v '`pwd`'/provisioning/containers/apache/tasks:/tasks \
+-v '`pwd`'/provisioning/containers/apache/templates/20-no-xdebug.ini.dist:/usr/local/etc/php/conf.d/20-xdebug.ini \
+-v '`pwd`':/var/www/devobs \
+--name=apache apache /bin/bash -c "cd /tasks && source setup-virtual-host.sh && tail -f /dev/null"'
+)
+
+    echo 'About to execute "'"${command}"'"'
+
+    /bin/bash -c "${command}"
 }
 
 function run_php_script() {
@@ -352,7 +441,8 @@ function run_php_script() {
     export SUFFIX="${suffix}"
     local symfony_environment="$(get_symfony_environment)"
 
-    local command=$(echo -n 'docker run \
+    local network=`get_network_option`
+    local command=$(echo -n 'docker run '"${network}"'\
     -e '"${symfony_environment}"' \
     -v '`pwd`'/provisioning/containers/php/templates/20-no-xdebug.ini.dist:/usr/local/etc/php/conf.d/20-xdebug.ini \
     -v '`pwd`':/var/www/devobs \
@@ -376,7 +466,8 @@ function run_php() {
     export SUFFIX="${suffix}"
     local symfony_environment="$(get_symfony_environment)"
 
-    local command=$(echo -n 'docker run \
+    local network=`get_network_option`
+    local command=$(echo -n 'docker run '"${network}"'\
     -e '"${symfony_environment}"' \
     -v '`pwd`'/provisioning/containers/php/templates/20-no-xdebug.ini.dist:/usr/local/etc/php/conf.d/20-xdebug.ini \
     -v '`pwd`':/var/www/devobs \
@@ -528,8 +619,18 @@ function produce_amqp_messages_from_member_timeline {
     execute_command "${rabbitmq_output_log}" "${rabbitmq_error_log}"
 }
 
+function produce_amqp_messages_for_aggregates_list {
+    export in_priority=1
+    export NAMESPACE="produce_aggregates_messages"
+    produce_amqp_messages_for_news_list
+}
+
 function produce_amqp_messages_for_news_list {
-    export NAMESPACE="produce_news_messages"
+    if [ -z ${NAMESPACE} ];
+    then
+        export NAMESPACE="produce_news_messages"
+    fi
+
     make remove-php-container
 
     export XDEBUG_CONFIG="idekey='phpstorm-xdebug'"
@@ -559,7 +660,19 @@ function produce_amqp_messages_for_news_list {
         return
     fi
 
-    local php_command='app/console weaving_the_web:amqp:produce:lists_members --screen_name='"${username}"' --list="'"${list_name}"'"'
+    local priority_option=''
+    if [ ! -z "${in_priority}" ];
+    then
+        priority_option='--priority_to_aggregates '
+    fi
+
+    local list_option='--list='"'${list_name}'"
+    if [ ! -z "${multiple_lists}" ];
+    then
+        list_option='--lists='"'${multiple_lists}'"
+    fi
+
+    local php_command='app/console weaving_the_web:amqp:produce:lists_members '"${priority_option}"'--screen_name='"${username}"' '"${list_option}"
 
     local symfony_environment="$(get_symfony_environment)"
 
@@ -582,10 +695,67 @@ function produce_amqp_messages_for_news_list {
     execute_command "${rabbitmq_output_log}" "${rabbitmq_error_log}"
 }
 
-function today_statuses {
+function refresh_statuses() {
+    export NAMESPACE="refresh_statuses"
+    make remove-php-container
+
+    export XDEBUG_CONFIG="idekey='phpstorm-xdebug'"
+
+    if [ -z "${PROJECT_DIR}" ];
+    then
+        export PROJECT_DIR='/var/www/devobs'
+    fi
+
+    local rabbitmq_output_log="app/logs/rabbitmq."${NAMESPACE}".out.log"
+    local rabbitmq_error_log="app/logs/rabbitmq."${NAMESPACE}".error.log"
+    ensure_log_files_exist "${rabbitmq_output_log}" "${rabbitmq_error_log}"
+    rabbitmq_output_log="${PROJECT_DIR}/${rabbitmq_output_log}"
+    rabbitmq_error_log="${PROJECT_DIR}/${rabbitmq_error_log}"
+
+    if [ -z "${aggregate_name}" ];
+    then
+        echo 'Please export a valid aggregate name: export aggregate_name="news"'
+
+        return
+    fi
+
+    local php_command='app/console press-review:map-aggregate-status-collection --aggregate-name="'"${aggregate_name}"'" -vvv'
+
+    local symfony_environment="$(get_symfony_environment)"
+
+    if [ -z "${DOCKER_MODE}" ];
+    then
+        command="${symfony_environment} /usr/bin/php $PROJECT_DIR/${php_command}"
+        echo 'Executing command: "'$command'"'
+        echo 'Logging standard output of RabbitMQ messages consumption in '"${rabbitmq_output_log}"
+        echo 'Logging standard error of RabbitMQ messages consumption in '"${rabbitmq_error_log}"
+        /bin/bash -c "$command >> ${rabbitmq_output_log} 2>> ${rabbitmq_error_log}"
+
+        return
+    fi
+
+    export SCRIPT="${php_command}"
+
+    echo 'Logging standard output of RabbitMQ messages consumption in '"${rabbitmq_output_log}"
+    echo 'Logging standard error of RabbitMQ messages consumption in '"${rabbitmq_error_log}"
+
+    execute_command "${rabbitmq_output_log}" "${rabbitmq_error_log}"
+}
+
+function run_php_unit_tests() {
+    if [ -z ${DEBUG} ];
+    then
+        bin/phpunit -c ./app/phpunit-twitter-messaging.xml.dist --process-isolation
+        return
+    fi
+
+    bin/phpunit -c ./app/phpunit-twitter-messaging.xml.dist --verbose --debug
+}
+
+function today_statuses() {
     cat app/logs/dev.log | awk '{$1=$2=$3="";print $0}' | sed -e 's/^\s\+//' | grep `date -I` | awk '{$1=$2="";print $0}'
 }
 
-function follow_today_statuses {
+function follow_today_statuses() {
     tail -f app/logs/dev.log | awk '{$1=$2=$3="";print $0}' | sed -e 's/^\s\+//' | grep `date -I` | awk '{$1=$2="";print $0}'
 }

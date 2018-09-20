@@ -5,10 +5,16 @@ parameters:
         WeavingTheWebDashboardBundle: ~
         WeavingTheWebUserBundle: ~
         WTWUserBundleTest:
-            dir: '%kernel.root_dir%/../src/WTW/UserBundle/Tests/Security/Core/User'
-            prefix: WTW\UserBundle\Tests\Security\Core\User
-            type: annotation
-            is_bundle: false
+            dir:        '%kernel.root_dir%/../src/WTW/UserBundle/Tests/Security/Core/User'
+            prefix:     WTW\UserBundle\Tests\Security\Core\User
+            type:       annotation
+            is_bundle:  false
+        Status:
+            alias:      'Status'
+            dir:        '%kernel.root_dir%/config/model'
+            is_bundle:  false
+            prefix:     App\Status\Entity
+            type:       xml
 
 # Doctrine Configuration
 doctrine:
@@ -23,15 +29,6 @@ doctrine:
                 user:           "%database_user%"
                 password:       "%database_password%"
                 port:           "%database_port%"
-                schema_filter:  "%schema_filter%"
-            libran:
-                charset:        "%database_charset_libran%"
-                driver:         "%database_driver_libran%"
-                host:           "%database_host_libran%"
-                dbname:         "%database_name_libran%"
-                user:           "%database_user_libran%"
-                password:       "%database_password_libran%"
-                port:           "%database_port_libran%"
                 schema_filter:  "%schema_filter%"
             admin:
                 charset:        "%database_charset_admin%"
@@ -69,6 +66,8 @@ doctrine:
                 password:       "%database_password_write%"
                 port:           "%database_port_write%"
                 schema_filter:  "%schema_filter%"
+        types:
+            uuid:  Ramsey\Uuid\Doctrine\UuidType
     orm:
         default_entity_manager: default
         entity_managers:
@@ -83,9 +82,6 @@ doctrine:
                 mappings: '%mapping%'
             read:
                 connection: read
-                mappings: '%mapping%'
-            libran:
-                connection: libran
                 mappings: '%mapping%'
             test_mysql:
                 connection: test_mysql

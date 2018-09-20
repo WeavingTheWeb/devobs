@@ -7,8 +7,26 @@ SHELL:=/bin/bash
 help:
 		@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
+create-network: ## Create Docker network
+		@/bin/bash -c 'source ./bin/functions.sh && create_network'
+
 remove-mysql-container: ## Remove MySQL container
 		@/bin/bash -c 'source ./bin/functions.sh && remove_mysql_container'
+
+build-apache-container: ## Build Apache image
+		@/bin/bash -c 'source ./bin/functions.sh && build_apache_container'
+
+set-permissions-in-apache-container: # Set permissions in Apache container
+		@/bin/bash -c 'source ./bin/functions.sh && set_permissions_in_apache_container'
+
+get-apache-interactive-shell: ## Get Apache interactive shell
+		@/bin/bash -c 'source ./bin/functions.sh && get_apache_container_interactive_shell'
+
+remove-apache-container: ## Remove Apache container
+		@/bin/bash -c 'source ./bin/functions.sh && remove_apache_container'
+
+run-apache-container: ## Run Apache container
+		@/bin/bash -c 'source ./bin/functions.sh && run_apache'
 
 run-mysql-container: ## Run MySQL container (https://hub.docker.com/_/mysql/)
 		@/bin/bash -c 'source ./bin/functions.sh && run_mysql_container'
@@ -22,7 +40,7 @@ initialize-mysql-volume: ## Set up MySQL container
 grant-privileges: ## Grant privileges
 		@/bin/bash -c 'source ./bin/functions.sh && grant_privileges'
 
-build-php-container: ## Build PHP container
+build-php-container: ## Build PHP image
 		@/bin/bash -c 'source ./bin/functions.sh && build_php_container'
 
 list-php-extensions: ## List PHP extensions
@@ -39,6 +57,9 @@ install-php-dependencies: ## Install PHP dependencies
 
 run-php: ## Run PHP with arguments
 		@/bin/bash -c 'source ./bin/functions.sh && run_php'
+
+create-database-schema-test: # Create database schema in test environment
+		@/bin/bash -c 'source ./bin/functions.sh && create_database_test_schema'
 
 diff-schema: ## Generate schema migrations scripts
 		@/bin/bash -c "export PROJECT_DIR=`pwd`; echo 'php /var/www/devobs/app/console doc:mig:diff' | make run-php"
@@ -70,11 +91,17 @@ list-rabbitmq-messages: ## List messages accumulated with RabbitMQ
 produce-amqp-messages-from-members-lists: ## Produce messages from members lists
 		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_from_members_lists'
 
+produce-amqp-messages-from-aggregates-lists: ## Produce messages from aggregates list
+		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_for_aggregates_list'
+
 produce-amqp-messages-from-news-lists: ## Produce messages from news list
 		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_for_news_list'
 
 produce-amqp-messages-from-member-timeline: ## Produce messages from member timeline
 		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_from_member_timeline'
+
+refresh-statuses: ## Refresh statuses
+		@/bin/bash -c 'source ./bin/functions.sh && refresh_statuses'
 
 keep-php-container-running: ## Keep a running container having PHP
 		@/bin/bash -c 'source ./bin/functions.sh && keep_php_container_running'
@@ -90,3 +117,6 @@ today-statuses: ## Filter the statuses for today from the log file
 
 follow-today-statuses: ## Filter the statuses for today from the log file
 		@/bin/bash -c 'source ./bin/functions.sh && follow_today_statuses'
+
+run-php-unit-tests: ## Run unit tests with PHPUnit
+		@/bin/bash -c 'source ./bin/functions.sh && run_php_unit_tests'

@@ -19,20 +19,14 @@ class AppKernel extends Kernel
         $bundles = array(
             // Standard edition framework
             new Symfony\Bundle\FrameworkBundle\FrameworkBundle(),
+            new Symfony\Bundle\MonologBundle\MonologBundle(),
             new Symfony\Bundle\SecurityBundle\SecurityBundle(),
             new Symfony\Bundle\TwigBundle\TwigBundle(),
-            new Symfony\Bundle\MonologBundle\MonologBundle(),
-            new JMS\AopBundle\JMSAopBundle(),
-            new JMS\DiExtraBundle\JMSDiExtraBundle($this),
-            new JMS\SecurityExtraBundle\JMSSecurityExtraBundle(),
-            new JMS\SerializerBundle\JMSSerializerBundle(),
             new Sensio\Bundle\FrameworkExtraBundle\SensioFrameworkExtraBundle(),
             // User management
             new WTW\UserBundle\WTWUserBundle(),
             new WeavingTheWeb\Bundle\UserBundle\WeavingTheWebUserBundle(),
             // API
-            new FOS\RestBundle\FOSRestBundle(),
-            new FOS\TwitterBundle\FOSTwitterBundle(),
             new WeavingTheWeb\Bundle\ApiBundle\WeavingTheWebApiBundle(),
             new WeavingTheWeb\Bundle\TwitterBundle\WeavingTheWebTwitterBundle(),
             // Sending logs to Sentry
@@ -46,8 +40,6 @@ class AppKernel extends Kernel
             // AMQP consumers / producers
             new OldSound\RabbitMqBundle\OldSoundRabbitMqBundle(),
             new WeavingTheWeb\Bundle\AmqpBundle\WeavingTheWebAmqpBundle(),
-            // View helper
-            new Liip\UrlAutoConverterBundle\LiipUrlAutoConverterBundle(),
         );
 
         if (in_array($this->getEnvironment(), array('dev', 'test'))) {

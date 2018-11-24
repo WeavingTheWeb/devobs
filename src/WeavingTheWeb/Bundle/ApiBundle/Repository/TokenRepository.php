@@ -2,14 +2,14 @@
 
 namespace WeavingTheWeb\Bundle\ApiBundle\Repository;
 
+use Doctrine\ORM\QueryBuilder;
 use Doctrine\ORM\EntityRepository,
     Doctrine\ORM\NoResultException;
 
 use Psr\Log\LoggerInterface;
 
 use WeavingTheWeb\Bundle\ApiBundle\Entity\Token,
-    WeavingTheWeb\Bundle\ApiBundle\Entity\TokenType,
-    WeavingTheWeb\Bundle\ApiBundle\Exception\InvalidTokenException;
+    WeavingTheWeb\Bundle\ApiBundle\Entity\TokenType;
 
 /**
  * @author Thierry Marianne <thierry.marianne@weaving-the-web.org>
@@ -104,23 +104,60 @@ class TokenRepository extends EntityRepository
     protected function isTokenFrozen(Token $token)
     {
         return !is_null($token->getFrozenUntil()) &&
-            $token->getFrozenUntil()->getTimestamp() > (new \DateTime())->getTimestamp();
+            $token->getFrozenUntil()->getTimestamp() >
+                (new \DateTime('now', new \DateTimeZone('UTC')))
+                    ->getTimestamp();
     }
 
     /**
      * @param $oauthToken
      * @return bool
-     * @throws InvalidTokenException
+     * @throws \Doctrine\ORM\NonUniqueResultException
      */
     public function isOauthTokenFrozen($oauthToken)
     {
-        $token = $this->findOneBy(['oauthToken' => $oauthToken]);
+        $token = $this->findUnfrozenToken($oauthToken);
 
-        if ($token instanceof Token) {
-            return $this->isTokenFrozen($token);
-        } else {
-            throw new InvalidTokenException('The token "' . $oauthToken . '" can not be found.');
+        return !($token instanceof Token);
+    }
+
+    /**
+     * @param string $token
+     * @return mixed|null
+     * @throws \Doctrine\ORM\NonUniqueResultException
+     */
+    public function findUnfrozenToken(string $token)
+    {
+        $queryBuilder = $this->createQueryBuilder('t');
+
+        $queryBuilder->andWhere('t.oauthToken = :token');
+        $queryBuilder->setParameter('token', $token);
+
+        $this->applyUnfrozenTokenCriteria($queryBuilder);
+
+        try {
+            return $queryBuilder->getQuery()->getSingleResult();
+        } catch (NoResultException $exception) {
+            return null;
         }
+    }
+
+    /**
+     * @param QueryBuilder $queryBuilder
+     * @return QueryBuilder
+     */
+    private function applyUnfrozenTokenCriteria(QueryBuilder $queryBuilder): QueryBuilder
+    {
+        $queryBuilder->andWhere('t.type = :type');
+        $tokenRepository = $this->getEntityManager()->getRepository('WeavingTheWebApiBundle:TokenType');
+        $tokenType = $tokenRepository->findOneBy(['name' => TokenType::USER]);
+        $queryBuilder->setParameter('type', $tokenType);
+
+        $queryBuilder->andWhere('t.oauthTokenSecret IS NOT NULL');
+
+        $queryBuilder->andWhere('(t.frozenUntil IS NULL or t.frozenUntil < NOW())');
+
+        return $queryBuilder->setMaxResults(1);
     }
 
     /**
@@ -155,18 +192,7 @@ class TokenRepository extends EntityRepository
     {
         $queryBuilder = $this->createQueryBuilder('t');
 
-        $tokenRepository = $this->getEntityManager()->getRepository('WeavingTheWebApiBundle:TokenType');
-        $tokenType = $tokenRepository->findOneBy(['name' => TokenType::USER]);
-
-        $queryBuilder->andWhere('t.type = :type');
-        $queryBuilder->setParameter('type', $tokenType);
-
-        $queryBuilder->andWhere('t.oauthTokenSecret IS NOT NULL');
-
-        $queryBuilder->andWhere('(t.frozenUntil IS NULL or t.frozenUntil < :now)');
-        $queryBuilder->setParameter('now', new \DateTime());
-
-        $queryBuilder->setMaxResults(1);
+        $this->applyUnfrozenTokenCriteria($queryBuilder);
 
         try {
             return $queryBuilder->getQuery()->getSingleResult();
@@ -192,7 +218,10 @@ class TokenRepository extends EntityRepository
         $queryBuilder->andWhere('t.oauthTokenSecret IS NOT NULL');
 
         $queryBuilder->andWhere('t.frozenUntil > :now');
-        $queryBuilder->setParameter('now', new \DateTime());
+        $queryBuilder->setParameter(
+            'now',
+            new \DateTime('now', new \DateTimeZone('UTC'))
+        );
 
         $queryBuilder->setMaxResults(1);
         $queryBuilder->orderBy('t.frozenUntil', 'ASC');

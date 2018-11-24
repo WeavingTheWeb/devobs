@@ -7,8 +7,6 @@ use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\ORM\Mapping as ORM;
 
 /**
- * Token type
- *
  * @ORM\Table(name="weaving_token_type")
  * @ORM\Entity()
  */

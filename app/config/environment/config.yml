@@ -1,6 +1,5 @@
 imports:
     - { resource: ../extensions/dbal.yml }
-    - { resource: ../extensions/friendsofsymfony.yml }
     - { resource: ../extensions/messaging.yml }
     - { resource: ../parameters.yml }
     - { resource: ../extensions/security.yml }
@@ -23,16 +22,9 @@ framework:
     translator:               { fallback:     en }
     validation:               { enable_annotations:     true }
 
-twig:
-    debug:            "%kernel.debug%"
-    strict_variables: "%kernel.debug%"
-
 sensio_framework_extra:
     view:    { annotations: false }
     router:  { annotations: true }
-
-sentry:
-    dsn: "%sentry_dsn_php%"
 
 parameters:
     basic_auth_pattern: /this-route-is-undefined-in-production

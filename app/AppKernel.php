@@ -29,8 +29,6 @@ class AppKernel extends Kernel
             // API
             new WeavingTheWeb\Bundle\ApiBundle\WeavingTheWebApiBundle(),
             new WeavingTheWeb\Bundle\TwitterBundle\WeavingTheWebTwitterBundle(),
-            // Sending logs to Sentry
-            new Sentry\SentryBundle\SentryBundle(),
             // Search
             new WeavingTheWeb\Bundle\DashboardBundle\WeavingTheWebDashboardBundle(),
             // ORM
@@ -53,6 +51,7 @@ class AppKernel extends Kernel
 
     /**
      * @param LoaderInterface $loader
+     * @throws Exception
      */
     public function registerContainerConfiguration(LoaderInterface $loader)
     {

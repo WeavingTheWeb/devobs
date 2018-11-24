@@ -76,8 +76,14 @@ function kill_existing_consumers {
 
 function consume_amqp_messages {
     local command_suffix="${1}"
+    local namespace="${2}"
 
-    export NAMESPACE="consume_amqp_messages"
+    if [ -z "${namespace}" ];
+    then
+        namespace='twitter'
+    fi
+
+    export NAMESPACE="consume_amqp_messages_${command_suffix}_${namespace}"
 
     export XDEBUG_CONFIG="idekey='phpstorm-xdebug'"
 
@@ -107,7 +113,7 @@ function consume_amqp_messages {
     rabbitmq_error_log="${PROJECT_DIR}/${rabbitmq_error_log}"
 
     env_option="$(get_environment_option)"
-    export SCRIPT="app/console rabbitmq:consumer -l $MEMORY_LIMIT -w -m $MESSAGES weaving_the_web_amqp.twitter.""${command_suffix}""$env_option -vvv"
+    export SCRIPT="app/console rabbitmq:consumer -l $MEMORY_LIMIT -w -m $MESSAGES weaving_the_web_amqp.""${namespace}"".""${command_suffix}""$env_option -vvv"
 
     local symfony_environment="$(get_symfony_environment)"
 
@@ -128,6 +134,22 @@ function consume_amqp_messages {
     execute_command "${rabbitmq_output_log}" "${rabbitmq_error_log}"
 }
 
+function consume_amqp_lively_status_messages {
+    consume_amqp_messages 'timely_status' 'consumer'
+}
+
+function consume_amqp_messages_for_aggregates_likes {
+    consume_amqp_messages 'aggregates_likes' 'consumer'
+}
+
+function consume_amqp_messages_for_networks {
+    consume_amqp_messages 'network' 'consumer'
+}
+
+function consume_amqp_messages_for_aggregates_status {
+    consume_amqp_messages 'aggregates_status'
+}
+
 function consume_amqp_messages_for_member_status {
     consume_amqp_messages 'user_status'
 }
@@ -136,8 +158,14 @@ function consume_amqp_messages_for_news_status {
     consume_amqp_messages 'news_status'
 }
 
-function consume_amqp_messages_for_aggregates_status {
-    consume_amqp_messages 'aggregates_status'
+function purge_queues() {
+    docker exec -ti rabbitmq rabbitmqctl purge_queue get-user-status -p /weaving_the_web
+    docker exec -ti rabbitmq rabbitmqctl purge_queue get-conversation-status -p /weaving_the_web
+    docker exec -ti rabbitmq rabbitmqctl purge_queue get-aggregates-status -p /weaving_the_web
+    docker exec -ti rabbitmq rabbitmqctl purge_queue get-aggregates-likes -p /weaving_the_web
+    docker exec -ti rabbitmq rabbitmqctl purge_queue get-news-status -p /weaving_the_web
+    docker exec -ti rabbitmq rabbitmqctl purge_queue get-network -p /weaving_the_web
+    docker exec -ti rabbitmq rabbitmqctl purge_queue get-timely-status -p /weaving_the_web
 }
 
 function execute_command () {
@@ -155,21 +183,27 @@ function execute_command () {
 }
 
 function grant_privileges {
-    local database_user_test=`cat app/config/parameters.yml | grep 'database_user_test:' | grep -v '#' | cut -f 2 -d ':' | sed -e 's/[[:space:]]//g'`
-    local database_name_test=`cat app/config/parameters.yml | grep 'database_name_test:' | grep -v '#' | cut -f 2 -d ':' | sed -e 's/[[:space:]]//g'`
+    local database_user_test="$(get_param_value_from_config "database_user_test")"
+    local database_name_test="$(get_param_value_from_config "database_name_test")"
+    local database_password_test="$(get_param_value_from_config "database_password_test")"
+
     cat provisioning/containers/mysql/templates/grant-privileges-to-testing-user.sql.dist | \
         sed -e 's/{database_name_test}/'"${database_name_test}"'/g' \
         -e 's/{database_user_test}/'"${database_user_test}"'/g' \
+        -e 's/{database_password_test}/'"${database_password_test}"'/g' \
         >  provisioning/containers/mysql/templates/grant-privileges-to-testing-user.sql
 
     docker exec -ti mysql mysql -uroot \
         -e "$(cat provisioning/containers/mysql/templates/grant-privileges-to-testing-user.sql)"
 
-    local database_user=`cat app/config/parameters.yml | grep 'database_user:' | grep -v '#' | cut -f 2 -d ':' | sed -e 's/[[:space:]]//g'`
-    local database_name=`cat app/config/parameters.yml | grep 'database_name:' | grep -v '#' | cut -f 2 -d ':' | sed -e 's/[[:space:]]//g'`
+    local database_user="$(get_param_value_from_config "database_user")"
+    local database_name="$(get_param_value_from_config "database_name")"
+    local database_password="$(get_param_value_from_config "database_password")"
+
     cat provisioning/containers/mysql/templates/grant-privileges-to-user.sql.dist | \
         sed -e 's/{database_name}/'"${database_name}"'/g' \
         -e 's/{database_user}/'"${database_user}"'/g' \
+        -e 's/{database_password}/'"${database_password}"'/g' \
         >  provisioning/containers/mysql/templates/grant-privileges-to-user.sql
 
     docker exec -ti mysql mysql -uroot \
@@ -187,12 +221,125 @@ function get_project_dir {
     echo "${project_dir}"
 }
 
-function create_database_test_schema {
+function create_database_schema {
+    local env="${1}"
+
+    if [ -z "${env}" ];
+    then
+        echo 'Please pass a valid environment ("test", "dev" or "prod")'
+    fi
+
     local project_dir="$(get_project_dir)"
-    echo 'php /var/www/devobs/app/console doctrine:schema:create -e test' | make run-php
+    echo 'php /var/www/devobs/app/console doctrine:schema:create -e '"${env}" | make run-php
 }
 
+function create_database_test_schema {
+    create_database_schema "test"
+}
+
+function create_database_prod_like_schema {
+    create_database_schema "prod"
+}
+
+function get_param_value_from_config() {
+    local name="${1}"
+
+    if [ -z "${name}" ];
+    then
+        echo 'Please provide the non-empty name of a parameter available in the configuration, which has not been commented out.'
+    fi
+
+    local param_value=`cat app/config/parameters.yml | grep "${name}"':' | grep -v '#' | \
+        cut -f 2 -d ':' | sed -e 's/[[:space:]]//g' -e 's/^"//' -e 's/"$//'`
+
+    echo "${param_value}"
+}
+
+function diff_schema {
+    local question="Would you like to remove the previous queries generated? Not doing so might have some unpredictable consequences."
+
+    if [ $(ls app/DoctrineMigrations/Version* | grep -c '') -gt 0 ];
+    then
+        if whiptail --defaultno --yesno "${question}" 20 60;
+        then
+            echo 'OK, let us remove those previous queries.'
+            # Ensuring the migrations files belong to rightful owner
+            sudo chown `whoami` ./app/DoctrineMigrations/Version*
+            local migration_directory="`pwd`/app/DoctrineMigrations/"
+            cd ./app/DoctrineMigrations/
+            ls ./Version* | xargs -I{} /bin/bash -c 'version="'${migration_directory}{}'" && echo "About to remove ${version}" && \
+                rm "${version}"'
+            cd ./../../
+        else
+            echo 'Ok, let us learn from our mistakes.'
+        fi
+    fi
+
+    /bin/bash -c "export PROJECT_DIR=`pwd`; echo 'php /var/www/devobs/app/console doc:mig:diff -vvvv' | make run-php"
+}
+
+# In production, export the *appropriate* environment variable (contains "_accepted_") to migrate a schema
+# No export of variable environment is provided here or in the Makefile documentation to prevent bad mistakes
+# from happening
+# In development, "app/config/parameters.yml" should contain a parameter %port_local%
+# holding the port of a development database
 function migrate_schema {
+    local pattern=$"s/\(\$this\->addSql('\)//g"
+    local first_query=$(cat "$(ls app/DoctrineMigrations/Version*.php | tail -n1)" | \
+        grep addSql \
+        | sed -e "${pattern}" )
+
+    local queries=$(printf %s "$(echo ${first_query} | head -n1 | head -c500)")
+
+    local port_accepted_once=''
+    if [ ! -z "${accepted_database_port}" ];
+    then
+        port_accepted_once="${accepted_database_port}"
+        unset accepted_database_port
+    fi;
+
+    local port_admin="$(get_param_value_from_config "database_port_admin")"
+
+    local with_risks=0
+    if [ "${port_accepted_once}" == "${port_admin}" ];
+    then
+        with_risks=1
+    fi
+
+    if [ ${with_risks} -eq 1 ];
+    then
+        local confirmation_request="Are you fully aware of what you're doing at this time: "
+        local now="$(date '+%Y-%m-%d %H:%M:%S')"
+        local question="$(printf "%s %s?" "${confirmation_request}" "${now}" )"
+        if whiptail --defaultno --yesno "${question}...${queries}" 20 60;
+        then
+            echo 'OK, let us migrate this schema, dear being capable of running commands.'
+        else
+            echo 'OK, good bye.'
+            return
+        fi
+    else
+        if [ ${port_admin} != '%port_local%' ];
+        then
+            echo "Sorry won't do for your own sake (please see README.me)."
+            return
+        fi
+    fi
+
+    local question="Are you sure you'd like to migrate the schema for database running on port ${port_admin}?"
+    # @see https://stackoverflow.com/a/27875395/282073
+    # The second most voted proposition was adopted for its use of use and readability
+    #
+    #                                                                           About the box width and height to be rendered
+    #                                                                           $ man whiptail | grep yesno -A4
+    if whiptail --defaultno --yesno "${question}...${queries}" 20 60;
+    then
+        echo 'OK, let us migrate this schema.'
+    else
+        echo 'OK, good bye.'
+        return
+    fi
+
     local project_dir="$(get_project_dir)"
     echo 'php '"${project_dir}"'/app/console doc:mig:mig --em=admin' | make run-php
 }
@@ -217,34 +364,110 @@ function remove_mysql_container {
 }
 
 function run_mysql_container {
-    local database_password="cat ../../../app/config/parameters.yml | grep -v '#' | grep 'database_password_admin:' | cut -f 2 -d ':' | sed -e 's/[[:space:]]//g'"
-    local database_name=$(cat <(cat app/config/parameters.yml | \
-        grep 'database_name:' | grep -v '#' \
-        cut -f 2 -d ':' | sed -e 's/[[:space:]]//g'))
+    local from="${1}"
 
-    echo 'Database name is '"${database_name}"
-    echo 'Database password is '"${database_password}"
+    if [ ! -z "${from}" ];
+    then
+        echo 'About to move to "'"${from}"'"'
+        cd "${from}"
+    fi
+
+    local database_password="$(get_param_value_from_config "database_password_admin")"
+    local database_name="$(get_param_value_from_config "database_name_admin")"
+    local database_user="$(get_param_value_from_config "database_user_admin")"
+
+    echo 'Database name is "'"${database_name}"'"'
+    echo 'User name is '"${database_user}*****"
+    local obfuscated_password=$(/bin/bash -c 'echo "'"${database_password}"'" | head -c5')
+    echo 'User password would be like '"${obfuscated_password}*****"
 
     cd ./provisioning/containers/mysql
 
-    local replacement_pattern='s/{password}/'$(cat <(/bin/bash -c "${database_password}"))'/'
+    local replacement_pattern='s/{password\}/'"${database_password}"'/'
     cat ./templates/my.cnf.dist | sed -e "${replacement_pattern}" > ./templates/my.cnf
 
     remove_mysql_container
 
-    local configuration_volume=''
+    local initializing=1
+    local configuration_volume='-v '"`pwd`"'/templates/my.cnf:/etc/mysql/conf.d/config-file.cnf '
+
     if [ -z "${INIT}" ];
     then
-        configuration_volume='-v '"`pwd`"'/templates/my.cnf:/etc/mysql/conf.d/config-file.cnf '
+        # Credentials yet to be granted can not be configured at initialization
+        configuration_volume=''
+        initializing=0
     fi
 
     local gateway=`ip -f inet addr  | grep docker0 -A1 | cut -d '/' -f 1 | grep inet | sed -e 's/inet//' -e 's/\s*//g'`
 
-    command="docker run --restart=always -d -p"${gateway}":3306:3306 --name mysql -e MYSQL_DATABASE=${database_name} \
-        -e MYSQL_ROOT_PASSWORD="$(cat <(/bin/bash -c "${database_password}"))" \
-        "${configuration_volume}"-v `pwd`/../../volumes/mysql:/var/lib/mysql \
-        mysql:5.7"
+    local mysql_volume_path=`pwd`"/../../volumes/mysql"
+    if [ ! -z "${MYSQL_VOLUME}" ];
+    then
+        mysql_volume_path="${MYSQL_VOLUME}"
+        echo 'About to mount "'"${MYSQL_VOLUME}"'" as MySQL volume'
+    fi
+
+    # @see https://hub.docker.com/_/mysql/
+    command="docker run --restart=always -d -p${gateway}:3306:3306 --name mysql \
+        -e MYSQL_DATABASE=${database_name} \
+        -e MYSQL_USER=${database_user} \
+        -e MYSQL_PASSWORD=${database_password} \
+        -e MYSQL_ROOT_PASSWORD=${database_password} \
+        ${configuration_volume} -v ${mysql_volume_path}:/var/lib/mysql \
+        mysql:5.7 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci"
+
+    # Restore current directory to project root dir
+    cd ./../../../
+
+    /bin/bash -c "echo 'About to execute command: ${command}'"
     /bin/bash -c "${command}"
+
+    if [ "${initializing}" -eq 0 ];
+    then
+        local last_container_id="$(docker ps -ql)"
+        local last_container_logs="$(docker logs "${last_container_id}" 2>&1)"
+
+        while [ $(echo "${last_container_logs}" | grep -c "\.sock") -eq 0 ];
+        do
+            sleep 1
+            last_container_logs="$(docker logs "${last_container_id}" 2>&1)"
+
+            test $(echo "${last_container_logs}" | grep -c "\.sock") -eq 0 && echo -n '.'
+        done
+
+        local matching_databases=$(docker exec -ti "${last_container_id}" mysql \-e 'show databases' | \
+            grep weaving_dev | grep -c '')
+        if [ ${matching_databases} -eq 0 ];
+        then
+            grant_privileges && \
+            create_database_prod_like_schema
+        fi
+    fi
+
+    # Log the last created container on initialization
+    if [ ${initializing} -eq 1 ];
+    then
+
+        local last_container_id="$(docker ps -ql)"
+        local last_container_logs="$(docker logs "${last_container_id}" 2>&1)"
+
+        while [ $(echo "${last_container_logs}" | grep -c "\.sock") -eq 0 ];
+        do
+            sleep 1
+            last_container_logs="$(docker logs "${last_container_id}" 2>&1)"
+
+            test $(echo "${last_container_logs}" | grep -c "\.sock") -eq 0 && echo -n '.' \
+            || printf "\n"%s ''
+        done
+
+        remove_mysql_container
+
+        unset INIT
+        run_mysql_container `pwd`
+    else
+        local last_container_id="$(docker ps -a | grep mysql | awk '{print $1}')"
+        docker exec -ti "${last_container_id}" mysql
+    fi
 }
 
 function initialize_mysql_volume {
@@ -252,10 +475,7 @@ function initialize_mysql_volume {
     sudo rm -rf ./provisioning/volumes/mysql/*
 
     export INIT=1
-
-    run_mysql_container
-
-    unset INIT
+    run_mysql_container # Will clean up INIT global var
 }
 
 function remove_rabbitmq_container {
@@ -317,7 +537,7 @@ function remove_php_container() {
 
     remove_exited_containers
 
-    local running_containers_matching_namespace="docker ps -a | grep php""${namespace}"
+    local running_containers_matching_namespace="docker ps -a | grep hours | grep php-""${namespace}"
 
     local running_containers=`/bin/bash -c "${running_containers_matching_namespace} | grep -c ''"`
     if [ "${running_containers}" -eq 0 ];
@@ -411,6 +631,9 @@ function run_apache() {
 -v '`pwd`'/provisioning/containers/apache/templates:/templates \
 -v '`pwd`'/provisioning/containers/apache/tasks:/tasks \
 -v '`pwd`'/provisioning/containers/apache/templates/20-no-xdebug.ini.dist:/usr/local/etc/php/conf.d/20-xdebug.ini \
+-v '`pwd`'/provisioning/containers/apache/templates/blackfire/zz-blackfire.ini:/usr/local/etc/php/conf.d/zz-blackfire.ini \
+-v '`pwd`'/provisioning/containers/apache/templates/blackfire/.blackfire.ini:/root/.blackfire.ini \
+-v '`pwd`'/provisioning/containers/apache/templates/blackfire/agent:/etc/blackfire/agent \
 -v '`pwd`':/var/www/devobs \
 --name=apache apache /bin/bash -c "cd /tasks && source setup-virtual-host.sh && tail -f /dev/null"'
 )
@@ -420,12 +643,77 @@ function run_apache() {
     /bin/bash -c "${command}"
 }
 
+function build_php_fpm_container() {
+    cd provisioning/containers/php-fpm
+    docker build -t php-fpm .
+}
+
+function run_php_fpm() {
+    remove_php_fpm_container
+
+    local port=80
+    if [ ! -z "${PRESS_REVIEW_PHP_FPM_PORT}" ];
+    then
+        port="${PRESS_REVIEW_PHP_FPM_PORT}"
+    fi
+
+    host host=''
+    if [ ! -z "${PRESS_REVIEW_PHP_FPM_HOST}" ];
+    then
+        host="${PRESS_REVIEW_PHP_FPM_HOST}"':'
+    fi
+
+    host mount=''
+    if [ ! -z "${PRESS_REVIEW_PHP_FPM_MOUNT}" ];
+    then
+        mount="${PRESS_REVIEW_PHP_FPM_MOUNT}"
+    fi
+
+    local symfony_environment="$(get_symfony_environment)"
+
+    local network=`get_network_option`
+    local command=$(echo -n 'docker run '"${network}"' \
+--restart=always \
+-d -p '${host}''${port}':9000 \
+-e '"${symfony_environment}"' \
+-v '`pwd`'/provisioning/containers/php-fpm/templates/20-no-xdebug.ini.dist:/usr/local/etc/php/conf.d/20-xdebug.ini \
+-v '`pwd`'/provisioning/containers/php-fpm/templates/press-review.conf:/usr/local/etc/php-fpm.d/www.conf \
+-v '`pwd`'/provisioning/containers/php-fpm/templates/docker.conf:/usr/local/etc/php-fpm.d/docker.conf \
+-v '`pwd`'/provisioning/containers/php-fpm/templates/zz-docker.conf:/usr/local/etc/php-fpm.d/zz-docker.conf \
+-v '`pwd`'/provisioning/containers/apache/templates/blackfire/zz-blackfire.ini:/usr/local/etc/php/conf.d/zz-blackfire.ini \
+-v '`pwd`'/provisioning/containers/apache/templates/blackfire/.blackfire.ini:/root/.blackfire.ini \
+-v '`pwd`'/provisioning/containers/apache/templates/blackfire/agent:/etc/blackfire/agent \
+'"${mount}"' \
+-v '`pwd`':/var/www/devobs \
+--name=php-fpm php-fpm php-fpm'
+)
+
+    echo 'About to execute "'"${command}"'"'
+
+    /bin/bash -c "${command}"
+}
+
+function remove_php_fpm_container {
+    if [ `docker ps -a | grep fpm -c` -eq 0 ]
+    then
+        return;
+    fi
+
+    docker ps -a | grep fpm | awk '{print $1}' | xargs docker rm -f
+}
+
 function run_php_script() {
     local script="${1}"
 
     if [ -z ${script} ];
     then
         script="${SCRIPT}"
+    fi
+
+    local memory=''
+    if [ ! -z "${PHP_MEMORY_LIMIT}" ];
+    then
+        memory="${PHP_MEMORY_LIMIT}"
     fi
 
     local namespace=''
@@ -446,7 +734,7 @@ function run_php_script() {
     -e '"${symfony_environment}"' \
     -v '`pwd`'/provisioning/containers/php/templates/20-no-xdebug.ini.dist:/usr/local/etc/php/conf.d/20-xdebug.ini \
     -v '`pwd`':/var/www/devobs \
-    --name=php'"${suffix}"' php /var/www/devobs/'"${script}")
+    --name=php'"${suffix}"' php'"${memory}"' /var/www/devobs/'"${script}")
 
     echo 'About to execute "'"${command}"'"'
 
@@ -527,20 +815,7 @@ function get_environment_option() {
 
 function produce_amqp_messages_from_members_lists {
     export NAMESPACE="produce_messages_from_members_lists"
-    make remove-php-container
-
-    export XDEBUG_CONFIG="idekey='phpstorm-xdebug'"
-
-    if [ -z "${PROJECT_DIR}" ];
-    then
-        export PROJECT_DIR='/var/www/devobs'
-    fi
-
-    local rabbitmq_output_log="app/logs/rabbitmq."${NAMESPACE}".out.log"
-    local rabbitmq_error_log="app/logs/rabbitmq."${NAMESPACE}".error.log"
-    ensure_log_files_exist "${rabbitmq_output_log}" "${rabbitmq_error_log}"
-    rabbitmq_output_log="${PROJECT_DIR}/${rabbitmq_output_log}"
-    rabbitmq_error_log="${PROJECT_DIR}/${rabbitmq_error_log}"
+    before_running_command
 
     if [ -z "${username}" ];
     then
@@ -549,31 +824,45 @@ function produce_amqp_messages_from_members_lists {
         return
     fi
 
-    local php_command='app/console weaving_the_web:amqp:produce:lists_members --screen_name='"${username}"
+    run_command 'app/console weaving_the_web:amqp:produce:lists_members --screen_name='"${username}"
+}
 
-    local symfony_environment="$(get_symfony_environment)"
+function produce_amqp_messages_for_networks {
+    export NAMESPACE="produce_messages_for_networks"
+    before_running_command
 
-    if [ -z "${DOCKER_MODE}" ];
+    if [ -z "${MEMBER_LIST}" ];
     then
-        command="${symfony_environment} /usr/bin/php $PROJECT_DIR/${php_command}"
-        echo 'Executing command: "'$command'"'
-        echo 'Logging standard output of RabbitMQ messages consumption in '"${rabbitmq_output_log}"
-        echo 'Logging standard error of RabbitMQ messages consumption in '"${rabbitmq_error_log}"
-        /bin/bash -c "$command >> ${rabbitmq_output_log} 2>> ${rabbitmq_error_log}"
+        echo 'Please export a valid member list: export MEMBER_LIST="bob,alice"'
 
         return
     fi
 
-    export SCRIPT="${php_command}"
+    run_command 'app/console import-network --member-list="'${MEMBER_LIST}'"'
+}
 
-    echo 'Logging standard output of RabbitMQ messages consumption in '"${rabbitmq_output_log}"
-    echo 'Logging standard error of RabbitMQ messages consumption in '"${rabbitmq_error_log}"
+function produce_amqp_messages_for_timely_statuses {
+    export NAMESPACE="produce_messages_for_timely_statuses"
+    before_running_command
 
-    execute_command "${rabbitmq_output_log}" "${rabbitmq_error_log}"
+    run_command 'app/console weaving_the_web:amqp:produce:timely_statuses'
 }
 
 function produce_amqp_messages_from_member_timeline {
     export NAMESPACE="produce_messages_from_member_timeline"
+
+    before_running_command
+    if [ -z "${username}" ];
+    then
+        echo 'Please export a valid username: export username="bob"'
+
+        return
+    fi
+
+    run_command 'app/console weaving_the_web:amqp:produce:user_timeline --screen_name="'"${username}"'" -vvv'
+}
+
+function before_running_command() {
     make remove-php-container
 
     export XDEBUG_CONFIG="idekey='phpstorm-xdebug'"
@@ -582,21 +871,17 @@ function produce_amqp_messages_from_member_timeline {
     then
         export PROJECT_DIR='/var/www/devobs'
     fi
+}
+
+function run_command {
+    local php_command=${1}
+    local memory_limit=${2}
 
     local rabbitmq_output_log="app/logs/rabbitmq."${NAMESPACE}".out.log"
     local rabbitmq_error_log="app/logs/rabbitmq."${NAMESPACE}".error.log"
     ensure_log_files_exist "${rabbitmq_output_log}" "${rabbitmq_error_log}"
     rabbitmq_output_log="${PROJECT_DIR}/${rabbitmq_output_log}"
     rabbitmq_error_log="${PROJECT_DIR}/${rabbitmq_error_log}"
-
-    if [ -z "${username}" ];
-    then
-        echo 'Please export a valid username: export username="bob"'
-
-        return
-    fi
-
-    local php_command='app/console weaving_the_web:amqp:produce:user_timeline --screen_name="'"${username}"'" -vvv'
 
     local symfony_environment="$(get_symfony_environment)"
 
@@ -612,6 +897,11 @@ function produce_amqp_messages_from_member_timeline {
     fi
 
     export SCRIPT="${php_command}"
+
+    if [ ! -z "${memory_limit}" ];
+    then
+        export PHP_MEMORY_LIMIT=' -d memory_limit='"${memory_limit}"
+    fi
 
     echo 'Logging standard output of RabbitMQ messages consumption in '"${rabbitmq_output_log}"
     echo 'Logging standard error of RabbitMQ messages consumption in '"${rabbitmq_error_log}"
@@ -625,26 +915,18 @@ function produce_amqp_messages_for_aggregates_list {
     produce_amqp_messages_for_news_list
 }
 
+function produce_amqp_messages_for_search_query {
+    export NAMESPACE="produce_search_query"
+    produce_amqp_messages_for_news_list
+}
+
 function produce_amqp_messages_for_news_list {
     if [ -z ${NAMESPACE} ];
     then
         export NAMESPACE="produce_news_messages"
     fi
 
-    make remove-php-container
-
-    export XDEBUG_CONFIG="idekey='phpstorm-xdebug'"
-
-    if [ -z "${PROJECT_DIR}" ];
-    then
-        export PROJECT_DIR='/var/www/devobs'
-    fi
-
-    local rabbitmq_output_log="app/logs/rabbitmq."${NAMESPACE}".out.log"
-    local rabbitmq_error_log="app/logs/rabbitmq."${NAMESPACE}".error.log"
-    ensure_log_files_exist "${rabbitmq_output_log}" "${rabbitmq_error_log}"
-    rabbitmq_output_log="${PROJECT_DIR}/${rabbitmq_output_log}"
-    rabbitmq_error_log="${PROJECT_DIR}/${rabbitmq_error_log}"
+    before_running_command
 
     if [ -z "${username}" ];
     then
@@ -653,9 +935,10 @@ function produce_amqp_messages_for_news_list {
         return
     fi
 
-    if [ -z "${list_name}" ];
+    if [ -z "${list_name}" ] && [ -z "${QUERY_RESTRICTION}" ];
     then
         echo 'Please export a valid list_name: export list_name="news :: France"'
+        echo 'Otherwise export a restriction query : export QUERY_RESTRICTION="Topic"'
 
         return
     fi
@@ -666,33 +949,20 @@ function produce_amqp_messages_for_news_list {
         priority_option='--priority_to_aggregates '
     fi
 
+    local query_restriction=''
+    if [ ! -z "${QUERY_RESTRICTION}" ];
+    then
+        query_restriction='--query_restriction='"${QUERY_RESTRICTION}"
+    fi
+
     local list_option='--list='"'${list_name}'"
     if [ ! -z "${multiple_lists}" ];
     then
         list_option='--lists='"'${multiple_lists}'"
     fi
 
-    local php_command='app/console weaving_the_web:amqp:produce:lists_members '"${priority_option}"'--screen_name='"${username}"' '"${list_option}"
-
-    local symfony_environment="$(get_symfony_environment)"
-
-    if [ -z "${DOCKER_MODE}" ];
-    then
-        command="${symfony_environment} /usr/bin/php $PROJECT_DIR/${php_command}"
-        echo 'Executing command: "'$command'"'
-        echo 'Logging standard output of RabbitMQ messages consumption in '"${rabbitmq_output_log}"
-        echo 'Logging standard error of RabbitMQ messages consumption in '"${rabbitmq_error_log}"
-        /bin/bash -c "$command >> ${rabbitmq_output_log} 2>> ${rabbitmq_error_log}"
-
-        return
-    fi
-
-    export SCRIPT="${php_command}"
-
-    echo 'Logging standard output of RabbitMQ messages consumption in '"${rabbitmq_output_log}"
-    echo 'Logging standard error of RabbitMQ messages consumption in '"${rabbitmq_error_log}"
-
-    execute_command "${rabbitmq_output_log}" "${rabbitmq_error_log}"
+    local arguments="${priority_option}"'--screen_name='"${username}"' '"${list_option}"' '"${query_restriction}"
+    run_command 'app/console weaving_the_web:amqp:produce:lists_members '"${arguments}"
 }
 
 function refresh_statuses() {

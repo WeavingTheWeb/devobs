@@ -4,7 +4,10 @@ namespace WeavingTheWeb\Bundle\TwitterBundle\Controller;
 
 use App\Accessor\Exception\NotFoundStatusException;
 use App\Accessor\StatusAccessor;
+use App\Conversation\ConversationAwareTrait;
+use Doctrine\DBAL\DBALException;
 use Doctrine\DBAL\Exception\ConnectionException;
+use Doctrine\DBAL\Exception\DriverException;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration as Extra;
 
 use Symfony\Bundle\FrameworkBundle\Controller\Controller,
@@ -12,13 +15,14 @@ use Symfony\Bundle\FrameworkBundle\Controller\Controller,
     Symfony\Component\HttpFoundation\Request;
 
 use WeavingTheWeb\Bundle\ApiBundle\Repository\StatusRepository;
-use WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException;
 
 /**
  * @package WeavingTheWeb\Bundle\TwitterBundle\Controller
  */
 class TweetController extends Controller
 {
+    use ConversationAwareTrait;
+
     /** @var StatusRepository */
     private $statusRepository;
 
@@ -65,6 +69,7 @@ class TweetController extends Controller
             $statuses = $this->statusRepository->findLatest($lastId, $aggregateName, $rawSql);
             $statusCode = 200;
 
+            $this->statusAccessor = $this->get('weaving_the_web.accessor.status');
             $statuses = $this->extractStatusProperties($statuses, $includeRepliedToStatuses = false);
 
             $response = new JsonResponse(
@@ -74,6 +79,62 @@ class TweetController extends Controller
             );
 
             $encodedStatuses = json_encode($statuses);
+            $this->setContentLengthHeader($response, $encodedStatuses);
+
+            return $this->setCacheHeaders($response);
+        } catch (DriverException|DBALException $driverException) {
+            $this->get('logger')->critical($driverException->getMessage());
+            return new JsonResponse(['error' => 'Too many connections'], 503);
+        } catch (\PDOException $exception) {
+            return $this->getExceptionResponse(
+                $exception,
+                $this->get('translator')->trans('twitter.error.database_connection', [], 'messages')
+            );
+        } catch (ConnectionException $exception) {
+            $this->get('logger')->critical('Could not connect to the database');
+        } catch (\Exception $exception) {
+            return $this->getExceptionResponse($exception);
+        }
+    }
+
+    /**
+     * @param Request $request
+     * @return JsonResponse
+     * @throws \Exception
+     *
+     * @Extra\Route(
+     *     "/likes",
+     *     name="weaving_the_web_liked_statuses"
+     * )
+     *
+     * @Extra\Method({"GET", "OPTIONS"})
+     *
+     * @Extra\Cache(public=true)
+     */
+    public function getLikedStatusesAction(Request $request)
+    {
+        if ($request->isMethod('OPTIONS')) {
+            return $this->getCorsOptionsResponse();
+        }
+
+        try {
+            $this->statusRepository = $this->get('weaving_the_web_twitter.repository.read.status');
+            // Look for statuses collected by any given access token
+            // (there is no restriction at this point of the implementation)
+            $this->statusRepository->setOauthTokens([]);
+
+            $likedStatuses = $this->statusRepository->findLikedStatuses();
+            $statusCode = 200;
+
+            $likedStatuses = $this->extractStatusProperties($likedStatuses, $includeRepliedToStatuses = false);
+
+            $response = new JsonResponse(
+                $likedStatuses,
+                $statusCode,
+                $this->getAccessControlOriginHeaders()
+            );
+
+            $encodedStatuses = json_encode($likedStatuses);
             $this->setContentLengthHeader($response, $encodedStatuses);
 
             return $this->setCacheHeaders($response);
@@ -114,7 +175,11 @@ class TweetController extends Controller
             $this->statusRepository = $this->get('weaving_the_web_twitter.repository.read.status');
             $statusId = $request->attributes->get('id');
 
-            $status = $this->findStatusOrFetchItByIdentifier($statusId, $shouldRefreshStatus = $request->query->has('refresh'));
+            $this->statusAccessor = $this->get('weaving_the_web.accessor.status');
+            $status = $this->findStatusOrFetchItByIdentifier(
+                $statusId,
+                $shouldRefreshStatus = $request->query->has('refresh')
+            );
             $statusCode = 200;
 
             $statuses = [$status];
@@ -156,64 +221,6 @@ class TweetController extends Controller
         }
     }
 
-    /**
-     * @param array $status
-     * @param array $decodedDocument
-     * @param bool  $includeRepliedToStatuses
-     * @return array
-     * @throws \Doctrine\ORM\OptimisticLockException
-     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\SuspendedAccountException
-     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\UnavailableResourceException
-     */
-    public function updateFromDecodedDocument(
-        array $status,
-        array $decodedDocument,
-        bool $includeRepliedToStatuses = false
-    ): array {
-        $status['media'] = [];
-        if (array_key_exists('entities', $decodedDocument) &&
-            array_key_exists('media', $decodedDocument['entities'])
-        ) {
-            $status['media'] = array_map(
-                function ($media) {
-                    if (array_key_exists('media_url_https', $media)) {
-                        return [
-                            'sizes' => $media['sizes'],
-                            'url' => $media['media_url_https'],
-                        ];
-                    }
-                },
-                $decodedDocument['entities']['media']
-            );
-        }
-
-        if (array_key_exists('avatar_url', $decodedDocument)) {
-            $status['avatar_url'] = $decodedDocument['avatar_url'];
-        }
-
-        if (array_key_exists('user', $decodedDocument) &&
-            array_key_exists('profile_image_url_https', $decodedDocument['user'])) {
-            $status['avatar_url'] = $decodedDocument['user']['profile_image_url_https'];
-        }
-
-        if (array_key_exists('retweet_count', $decodedDocument)) {
-            $status['retweet_count'] = $decodedDocument['retweet_count'];
-        }
-
-        if (array_key_exists('favorite_count', $decodedDocument)) {
-            $status['favorite_count'] = $decodedDocument['favorite_count'];
-        }
-
-        if (array_key_exists('created_at', $decodedDocument)) {
-            $status['published_at'] = $decodedDocument['created_at'];
-        }
-
-        return $this->extractConversationProperties(
-            $status,
-            $decodedDocument,
-            $includeRepliedToStatuses
-        );
-    }
 
     /**
      * @param Request $request
@@ -360,122 +367,6 @@ class TweetController extends Controller
     }
 
     /**
-     * @param array $statuses
-     * @param bool  $includeRepliedToStatuses
-     * @return array
-     */
-    private function extractStatusProperties(array $statuses, bool $includeRepliedToStatuses = false): array
-    {
-        return array_map(
-            function ($status) use ($includeRepliedToStatuses) {
-                $defaultStatus = [
-                    'status_id' => $status['status_id'],
-                    'avatar_url' => 'N/A',
-                    'text' => $status['text'],
-                    'url' => 'https://twitter.com/' . $status['screen_name'] . '/status/' . $status['status_id'],
-                    'retweet_count' => 'N/A',
-                    'favorite_count' => 'N/A',
-                    'username' => $status['screen_name'],
-                    'published_at' => 'N/A',
-                ];
-
-                $hasDocumentFromApi = array_key_exists('api_document', $status);
-
-                if (!array_key_exists('original_document', $status) &&
-                !$hasDocumentFromApi) {
-                    return $defaultStatus;
-                }
-
-                if ($hasDocumentFromApi) {
-                    $status['original_document'] = $status['api_document'];
-                    unset($status['api_document']);
-                }
-
-                $decodedDocument = json_decode($status['original_document'], $asAssociativeArray = true);
-
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    return $defaultStatus;
-                }
-
-
-                if (array_key_exists('full_text', $decodedDocument) &&
-                    $defaultStatus['text'] !== $decodedDocument['full_text']
-                ) {
-                    $defaultStatus['text'] = $decodedDocument['full_text'];
-                }
-
-
-                if (array_key_exists('retweeted_status', $decodedDocument)) {
-                    $updatedStatus = $this->updateFromDecodedDocument(
-                        $defaultStatus,
-                        $decodedDocument['retweeted_status'],
-                        $includeRepliedToStatuses
-                    );
-                    $updatedStatus['username'] = $decodedDocument['retweeted_status']['user']['screen_name'];
-                    $updatedStatus['username_of_retweeting_member'] = $defaultStatus['username'];
-                    $updatedStatus['retweet'] = true;
-                    $updatedStatus['text'] = $decodedDocument['retweeted_status']['full_text'];
-
-                    return $updatedStatus;
-                }
-
-                $statusUpdatedFromDecodedDocument = $defaultStatus;
-                $updatedStatus = $this->updateFromDecodedDocument(
-                    $statusUpdatedFromDecodedDocument,
-                    $decodedDocument,
-                    $includeRepliedToStatuses
-                );
-                $updatedStatus['retweet'] = false;
-
-                return $updatedStatus;
-
-            },
-            $statuses
-        );
-    }
-
-    /**
-     * @param array $updatedStatus
-     * @param array $decodedDocument
-     * @param bool  $includeRepliedToStatuses
-     * @return array
-     * @throws \Doctrine\ORM\OptimisticLockException
-     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\SuspendedAccountException
-     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\UnavailableResourceException
-     */
-    private function extractConversationProperties(
-        array $updatedStatus,
-        array $decodedDocument,
-        bool $includeRepliedToStatuses = false
-    ): array {
-        $updatedStatus['in_conversation'] = null;
-        if ($includeRepliedToStatuses && array_key_exists('in_reply_to_status_id_str', $decodedDocument) &&
-        !is_null($decodedDocument['in_reply_to_status_id_str'])) {
-            $updatedStatus['id_of_status_replied_to'] = $decodedDocument['in_reply_to_status_id_str'];
-            $updatedStatus['username_of_member_replied_to'] = $decodedDocument['in_reply_to_screen_name'];
-            $updatedStatus['in_conversation'] = true;
-
-            $this->statusAccessor = $this->get('weaving_the_web.accessor.status');
-
-            try {
-                $repliedToStatus = $this->statusAccessor->refreshStatusByIdentifier(
-                    $updatedStatus['id_of_status_replied_to']
-                );
-            } catch (NotFoundMemberException $notFoundMemberException) {
-                $this->statusAccessor->ensureMemberHavingScreenNameExists($notFoundMemberException->screenName);
-                $repliedToStatus = $this->statusAccessor->refreshStatusByIdentifier(
-                    $updatedStatus['id_of_status_replied_to']
-                );
-            }
-
-            $repliedToStatus = $this->extractStatusProperties([$repliedToStatus], $includeRepliedToStatuses = true);
-            $updatedStatus['status_replied_to'] = $repliedToStatus[0];
-        }
-
-        return $updatedStatus;
-    }
-
-    /**
      * @param JsonResponse $response
      * @return JsonResponse
      */
@@ -514,24 +405,5 @@ class TweetController extends Controller
         ]);
 
         return $response;
-    }
-
-    /**
-     * @param $statusId
-     * @param $shouldRefreshStatus
-     * @return \API|\App\Status\Entity\NullStatus|array|mixed|null|object|\stdClass
-     * @throws NotFoundMemberException
-     * @throws \Doctrine\ORM\OptimisticLockException
-     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\SuspendedAccountException
-     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\UnavailableResourceException
-     */
-    private function findStatusOrFetchItByIdentifier($statusId, $shouldRefreshStatus)
-    {
-        if ($shouldRefreshStatus) {
-            $this->statusAccessor = $this->get('weaving_the_web.accessor.status');
-            return $this->statusAccessor->refreshStatusByIdentifier($statusId, $skipExistingStatus = true);
-        }
-
-        return $this->statusRepository->findStatusIdentifiedBy($statusId);
     }
 }

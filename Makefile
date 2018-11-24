@@ -58,13 +58,25 @@ install-php-dependencies: ## Install PHP dependencies
 run-php: ## Run PHP with arguments
 		@/bin/bash -c 'source ./bin/functions.sh && run_php'
 
+build-php-fpm-container: ## Build PHP-FPM image
+		@/bin/bash -c 'source ./bin/functions.sh && build_php_fpm_container'
+
+run-php-fpm: ## Run PHP-FPM worker
+		@/bin/bash -c 'source ./bin/functions.sh && run_php_fpm'
+
+remove-php-fpm-container: ## Remove PHP-FPM container
+		@/bin/bash -c 'source ./bin/functions.sh && remove_php_fpm_container'
+
 create-database-schema-test: # Create database schema in test environment
 		@/bin/bash -c 'source ./bin/functions.sh && create_database_test_schema'
 
-diff-schema: ## Generate schema migrations scripts
-		@/bin/bash -c "export PROJECT_DIR=`pwd`; echo 'php /var/www/devobs/app/console doc:mig:diff' | make run-php"
+create-prod-like-schema: ## Create production-like schema
+		@/bin/bash -c 'export PROJECT_DIR='/var/www/devobs'; source ./bin/functions.sh && create_database_prod_like_schema '
 
-migrate-schema-in-production: ## Migrate the database schema in production
+diff-schema: ## Generate schema migrations scripts
+		@/bin/bash -c 'export PROJECT_DIR='/var/www/devobs'; source ./bin/functions.sh && diff_schema'
+
+migrate-schema: ## Migrate the database schema
 		@/bin/bash -c 'export PROJECT_DIR='/var/www/devobs'; source ./bin/functions.sh && migrate_schema'
 
 configure-rabbitmq-user-privileges: ## Configure RabbitMQ user privileges
@@ -77,7 +89,7 @@ list-amqp-messages: ## List AMQP messags
 		@/bin/bash -c 'source ./bin/functions.sh && list_amqp_queues'
 
 purge-amqp-queue: ## Purge queue
-		@/bin/bash -c 'docker exec -ti rabbitmq rabbitmqctl purge_queue get-user-status -p /weaving_the_web'
+		@/bin/bash -c 'source ./bin/functions.sh && purge_queues'
 
 run-rabbitmq-container: ## Run RabbitMQ container (https://hub.docker.com/_/rabbitmq/)
 		@/bin/bash -c 'source ./bin/functions.sh && run_rabbitmq_container'
@@ -93,6 +105,15 @@ produce-amqp-messages-from-members-lists: ## Produce messages from members lists
 
 produce-amqp-messages-from-aggregates-lists: ## Produce messages from aggregates list
 		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_for_aggregates_list'
+
+produce-amqp-messages-from-search-query: ## Produce messages from search query
+		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_for_search_query'
+
+produce-amqp-messages-for-timely-statuses: ## Produce messages for timely statuses
+		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_for_timely_statuses'
+
+produce-amqp-messages-for-networks: ## Produce messages for networks
+		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_for_networks'
 
 produce-amqp-messages-from-news-lists: ## Produce messages from news list
 		@/bin/bash -c 'source ./bin/functions.sh && produce_amqp_messages_for_news_list'

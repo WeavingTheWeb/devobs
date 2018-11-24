@@ -1,3 +1,6 @@
+imports:
+    - { resource: dql.yml }
+
 parameters:
     mapping:
         WTWUserBundle: ~
@@ -9,9 +12,21 @@ parameters:
             prefix:     WTW\UserBundle\Tests\Security\Core\User
             type:       annotation
             is_bundle:  false
+        Aggregate:
+            alias:      'Aggregate'
+            dir:        '%kernel.root_dir%/config/model/aggregate'
+            is_bundle:  false
+            prefix:     App\Aggregate\Entity
+            type:       xml
+        Member:
+            alias:      'Member'
+            dir:        '%kernel.root_dir%/config/model/member'
+            is_bundle:  false
+            prefix:     App\Member\Entity
+            type:       xml
         Status:
             alias:      'Status'
-            dir:        '%kernel.root_dir%/config/model'
+            dir:        '%kernel.root_dir%/config/model/status'
             is_bundle:  false
             prefix:     App\Status\Entity
             type:       xml
@@ -30,6 +45,7 @@ doctrine:
                 password:       "%database_password%"
                 port:           "%database_port%"
                 schema_filter:  "%schema_filter%"
+                server_version:  5.6
             admin:
                 charset:        "%database_charset_admin%"
                 driver:         "%database_driver_admin%"
@@ -39,6 +55,7 @@ doctrine:
                 password:       "%database_password_admin%"
                 port:           "%database_port_admin%"
                 schema_filter:  "%schema_filter%"
+                server_version: 5.6
             read:
                 charset:        "%database_charset_read%"
                 driver:         "%database_driver_read%"
@@ -48,6 +65,7 @@ doctrine:
                 password:       "%database_password_read%"
                 port:           "%database_port_read%"
                 schema_filter:  "%schema_filter%"
+                server_version: 5.6
             test_mysql:
                 charset:        "%database_charset_test%"
                 driver:         "%database_driver_test%"
@@ -57,6 +75,7 @@ doctrine:
                 password:       "%database_password_test%"
                 port:           "%database_port_test%"
                 schema_filter:  "%schema_filter%"
+                server_version: 5.6
             write:
                 charset:        "%database_charset_write%"
                 driver:         "%database_driver_write%"
@@ -66,6 +85,7 @@ doctrine:
                 password:       "%database_password_write%"
                 port:           "%database_port_write%"
                 schema_filter:  "%schema_filter%"
+                server_version: 5.6
         types:
             uuid:  Ramsey\Uuid\Doctrine\UuidType
     orm:
@@ -74,20 +94,22 @@ doctrine:
             default:
                 connection: default
                 mappings: '%mapping%'
-                dql:
-                    datetime_functions:
-                        date: DoctrineExtensions\Query\Mysql\Date
+                dql: "%doctrine_extensions_dql%"
             admin:
                 connection: admin
                 mappings: '%mapping%'
+                dql: "%doctrine_extensions_dql%"
             read:
                 connection: read
                 mappings: '%mapping%'
+                dql: "%doctrine_extensions_dql%"
             test_mysql:
                 connection: test_mysql
                 mappings: '%mapping%'
+                dql: "%doctrine_extensions_dql%"
             write:
                 connection: write
                 mappings: '%mapping%'
+                dql: "%doctrine_extensions_dql%"
         auto_generate_proxy_classes: '%kernel.debug%'
 

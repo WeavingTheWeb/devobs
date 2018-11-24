@@ -99,11 +99,8 @@ abstract class TestCase extends WebTestCase implements TestCaseInterface, DataFi
     }
 
     /**
-     * Generate the schema.
-     *
-     * @throws \Doctrine\DBAL\Schema\SchemaException
-     *
-     * @return void
+     * @throws ConnectionException
+     * @throws SchemaException
      */
     public function regenerateSchema()
     {

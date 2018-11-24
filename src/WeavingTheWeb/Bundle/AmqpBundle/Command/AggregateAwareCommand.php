@@ -2,6 +2,7 @@
 
 namespace WeavingTheWeb\Bundle\AmqpBundle\Command;
 
+use App\Aggregate\AggregateAwareTrait;
 use App\Console\CommandReturnCodeAwareInterface;
 
 /**
@@ -9,6 +10,20 @@ use App\Console\CommandReturnCodeAwareInterface;
  */
 abstract class AggregateAwareCommand extends AccessorAwareCommand implements CommandReturnCodeAwareInterface
 {
+    const NOT_FOUND_MEMBER = 10;
+
+    const UNAVAILABLE_RESOURCE = 20;
+
+    const API_ERROR = 30;
+
+    const UNEXPECTED_ERROR = 40;
+
+    const SUSPENDED_USER = 50;
+
+    const PROTECTED_ACCOUNT = 60;
+
+    use AggregateAwareTrait;
+
     /**
      * @var \WeavingTheWeb\Bundle\ApiBundle\Repository\AggregateRepository
      */
@@ -29,25 +44,5 @@ abstract class AggregateAwareCommand extends AccessorAwareCommand implements Com
         $this->entityManager = $this->getContainer()->get('doctrine.orm.entity_manager');
         $this->aggregateRepository = $this->getContainer()->get('weaving_the_web_twitter.repository.aggregate');
         $this->userRepository = $this->getContainer()->get('user_manager');
-    }
-
-    /**
-     * @param $screenName
-     * @param $listName
-     * @return null|object|\WeavingTheWeb\Bundle\ApiBundle\Entity\Aggregate
-     * @throws \Doctrine\ORM\OptimisticLockException
-     */
-    protected function getListAggregateByName($screenName, $listName)
-    {
-        $aggregate = $this->aggregateRepository->findOneBy(['name' => $listName, 'screenName' => $screenName]);
-
-        if (!$aggregate) {
-            $aggregate = $this->aggregateRepository->make($screenName, $listName);
-
-            $this->entityManager->persist($aggregate);
-            $this->entityManager->flush();
-        }
-
-        return $aggregate;
     }
 }

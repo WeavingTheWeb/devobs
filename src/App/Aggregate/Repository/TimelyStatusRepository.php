@@ -41,6 +41,21 @@ class TimelyStatusRepository extends EntityRepository
             'screenName' => $properties['member_name']
         ]);
 
+        if (!($aggregate instanceof Aggregate)) {
+            $aggregate = $this->aggregateRepository->findOneBy([
+                'name' => $properties['aggregate_name'],
+                'screenName' => $properties['member_name']
+            ]);
+
+            if (!($aggregate instanceof Aggregate)) {
+                $aggregate = $this->aggregateRepository->make(
+                    $properties['member_name'],
+                    $properties['aggregate_name']
+                );
+                $this->aggregateRepository->save($aggregate);
+            }
+        }
+
         return new TimelyStatus(
             $status,
             $aggregate,
@@ -101,10 +116,11 @@ class TimelyStatusRepository extends EntityRepository
 
     /**
      * @param TimelyStatus $timelyStatus
+     * @param bool         $doNotFlush
      * @return TimelyStatus
      * @throws \Doctrine\ORM\OptimisticLockException
      */
-    public function saveTimelyStatus(TimelyStatus $timelyStatus)
+    public function saveTimelyStatus(TimelyStatus $timelyStatus, $doNotFlush = false)
     {
         $this->getEntityManager()->persist($timelyStatus);
         $this->getEntityManager()->flush();

@@ -52,23 +52,23 @@ class UserData extends AbstractFixture implements OrderedFixtureInterface,  Cont
                 'email' => 'user@weaving-the-web.org',
                 'enabled' => true,
                 'username_canonical' => 'user',
-                'user_non_expired' => true,
-                'credentials_non_expired' => true,
                 'twitter_id' => 1,
                 'twitter_username' => 'user',
                 'api_key' => sha1('user'.'secret'),
                 'roles' => [],
+                'total_subscribees' => 0,
+                'total_subscriptions' => 0,
             ], [
                 'username' => $this->container->getParameter('weaving_the_web.quality_assurance.super.username'),
                 'password' => $this->container->getParameter('weaving_the_web.quality_assurance.super.password'),
                 'email' => 'super@weaving-the-web.org',
                 'enabled' => true,
                 'username_canonical' => 'super',
-                'user_non_expired' => true,
-                'credentials_non_expired' => true,
                 'twitter_id' => 2,
                 'twitter_username' => 'super',
                 'roles' => ['super_admin'],
+                'total_subscribees' => 0,
+                'total_subscriptions' => 0,
             ]
         ];
 
@@ -78,8 +78,8 @@ class UserData extends AbstractFixture implements OrderedFixtureInterface,  Cont
                 $userProperties['password'],
                 array(), // Roles declared as an empty array first of all
                 $userProperties['enabled'],
-                $userProperties['user_non_expired'],
-                $userProperties['credentials_non_expired']
+                null,     // Deprecated since removal
+                null // of the implementation of UserInterface
             );
 
             if (array_key_exists('api_key', $userProperties)) {
@@ -92,8 +92,6 @@ class UserData extends AbstractFixture implements OrderedFixtureInterface,  Cont
             $user->setUsernameCanonical($userProperties['username_canonical']);
             $user->setTwitterUsername($userProperties['twitter_username']);
 
-            $this->addUserRoles($user, $userProperties);
-
             /** @var \WeavingTheWeb\Bundle\ApiBundle\Entity\Token $firstToken */
             $firstToken = $manager->merge($this->getReference('user_token_1'));
             $user->addToken($firstToken);
@@ -104,34 +102,12 @@ class UserData extends AbstractFixture implements OrderedFixtureInterface,  Cont
 
             $this->addReference($userProperties['username_canonical'], $user);
 
+            $user->totalSubscriptions = $userProperties['total_subscriptions'];
+            $user->totalSubscribees = $userProperties['total_subscribees'];
+
             $manager->persist($user);
         }
 
         $manager->flush();
-    }
-
-    /**
-     * @param $user
-     * @param $userProperties
-     */
-    protected function addUserRoles(User $user, $userProperties)
-    {
-        $roleReferencePrefix = 'role_';
-        $userRoleReferenceName = $roleReferencePrefix . RoleInterface::ROLE_USER;
-
-        /** @var \WeavingTheWeb\Bundle\UserBundle\Entity\Role $role */
-        $role = $this->manager->merge($this->getReference($userRoleReferenceName));
-        $user->addRole($role);
-
-        if (array_key_exists('roles', $userProperties) && count($userProperties['roles']) > 0) {
-            foreach ($userProperties['roles'] as $roleName) {
-                $roleConstant = constant(RoleInterface::class . '::' . strtoupper('role_' . $roleName));
-                $roleReferenceName = $roleReferencePrefix . $roleConstant;
-
-                /** @var \WeavingTheWeb\Bundle\UserBundle\Entity\Role; $role */
-                $role = $this->manager->merge($this->getReference($roleReferenceName));
-                $user->addRole($role);
-            }
-        }
     }
 }

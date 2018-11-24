@@ -2,10 +2,12 @@
 
 namespace WeavingTheWeb\Bundle\ApiBundle\Repository;
 
+use App\Accessor\Exception\NotFoundStatusException;
 use App\StatusCollection\Mapping\MappingAwareInterface;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\ORM\NoResultException;
 use Doctrine\ORM\QueryBuilder;
+use WeavingTheWeb\Bundle\ApiBundle\Entity\Aggregate;
 use WeavingTheWeb\Bundle\ApiBundle\Entity\Status;
 use WeavingTheWeb\Bundle\ApiBundle\Entity\StatusInterface;
 use WTW\UserBundle\Entity\User;
@@ -113,7 +115,7 @@ class StatusRepository extends ArchivedStatusRepository
             ->andWhere('s.hash = :hash');
 
         $queryBuilder->setParameter('hash', $hash);
-        $count = $queryBuilder->getQuery()->getSingleScalarResult();
+        $count = intval($queryBuilder->getQuery()->getSingleScalarResult());
 
         if ($this->logger) {
             $this->logger->info(
@@ -152,9 +154,38 @@ class StatusRepository extends ArchivedStatusRepository
         $totalStatuses = $queryBuilder->getQuery()->getSingleScalarResult();
         $totalStatuses = intval($totalStatuses) + $this->archivedStatusRepository->countHowManyStatusesFor($screenName);
 
-        $this->memberManager->declareTotalStatusesOfMemberWithScreenName($totalStatuses, $screenName);
+        $this->memberManager->declareTotalStatusesOfMemberWithName($totalStatuses, $screenName);
 
         return $totalStatuses;
+    }
+
+    /**
+     * @param $screenName
+     * @return int|mixed
+     * @throws NoResultException
+     * @throws \Doctrine\ORM\NonUniqueResultException
+     * @throws \Doctrine\ORM\OptimisticLockException
+     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException
+     */
+    public function updateLastStatusPublicationDate($screenName)
+    {
+        /** @var User $member */
+        $member = $this->memberManager->findOneBy(['twitter_username' => $screenName]);
+
+        $lastStatus = $this->findOneBy([
+            'screenName' => $screenName
+        ], ['createdAt' => 'DESC']);
+
+        if (!$lastStatus instanceof StatusInterface) {
+            throw new NotFoundStatusException(sprintf(
+                'No status has been collected for member with screen name "%s"',
+                $screenName
+            ));
+        }
+
+        $member->lastStatusPublicationDate = $lastStatus->getCreatedAt();
+
+        return $this->memberManager->saveMember($member);
     }
 
     /**
@@ -241,15 +272,15 @@ class StatusRepository extends ArchivedStatusRepository
     }
 
     /**
-     * @param        $screenName
-     * @param string $direction
-     * @param null   $before
-     * @return array|mixed|StatusInterface
+     * @param string         $screenName
+     * @param string         $direction
+     * @param \DateTime|null $before
+     * @return array
      * @throws \Doctrine\ORM\NonUniqueResultException
      * @throws \Doctrine\ORM\OptimisticLockException
      * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException
      */
-    protected function findNextExtremum($screenName, $direction = 'asc', $before = null): array
+    public function findNextExtremum(string $screenName, string $direction = 'asc', \DateTime $before = null): array
     {
         $nextExtremum = $this->archivedStatusRepository->findNextExtremum($screenName, $direction, $before);
 
@@ -264,7 +295,11 @@ class StatusRepository extends ArchivedStatusRepository
 
         if ($before) {
             $queryBuilder->andWhere('DATE(s.createdAt) = :date');
-            $queryBuilder->setParameter('date', (new \DateTime($before))->format('Y-m-d'));
+            $queryBuilder->setParameter(
+                'date',
+                (new \DateTime($before, new \DateTimeZone('UTC')))
+                    ->format('Y-m-d')
+            );
         }
 
         try {
@@ -288,5 +323,85 @@ class StatusRepository extends ArchivedStatusRepository
         } catch (NoResultException $exception) {
             return [];
         }
+    }
+
+    /**
+     * @param $status
+     * @return \App\Member\MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
+     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException
+     */
+    public function declareMaximumStatusId($status)
+    {
+        $maxStatus = $status->id_str;
+
+        return $this->memberManager->declareMaxStatusIdForMemberWithScreenName(
+            $maxStatus,
+            $status->user->screen_name
+        );
+    }
+
+    /**
+     * @param $status
+     * @return \App\Member\MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
+     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException
+     */
+    public function declareMinimumStatusId($status)
+    {
+        $minStatus = $status->id_str;
+
+        return $this->memberManager->declareMinStatusIdForMemberWithScreenName(
+            $minStatus,
+            $status->user->screen_name
+        );
+    }
+
+    /**
+     * @param        $status
+     * @param string $memberName
+     * @return \App\Member\MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
+     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException
+     */
+    public function declareMaximumLikedStatusId($status, string $memberName)
+    {
+        $maxStatus = $status->id_str;
+
+        return $this->memberManager->declareMaxLikeIdForMemberWithScreenName(
+            $maxStatus,
+            $memberName
+        );
+    }
+
+    /**
+     * @param        $status
+     * @param string $memberName
+     * @return \App\Member\MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
+     * @throws \WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException
+     */
+    public function declareMinimumLikedStatusId($status, string $memberName)
+    {
+        $minStatus = $status->id_str;
+
+        return $this->memberManager->declareMinLikeIdForMemberWithScreenName(
+            $minStatus,
+            $memberName
+        );
+    }
+
+    /**
+     * @param Aggregate $aggregate
+     * @return array
+     */
+    public function findByAggregate(Aggregate $aggregate)
+    {
+        $queryBuilder = $this->createQueryBuilder('s');
+        $queryBuilder->join('s.aggregates', 'a');
+        $queryBuilder->andWhere('a.id = :id');
+        $queryBuilder->setParameter('id', $aggregate->getId());
+
+        return $queryBuilder->getQuery()->getResult();
     }
 }

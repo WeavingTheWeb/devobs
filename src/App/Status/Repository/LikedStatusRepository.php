@@ -6,6 +6,7 @@ use App\Member\MemberInterface;
 use App\Status\Entity\LikedStatus;
 use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\NoResultException;
+use WeavingTheWeb\Bundle\ApiBundle\Entity\Aggregate;
 use WeavingTheWeb\Bundle\ApiBundle\Entity\StatusInterface;
 use WTW\UserBundle\Repository\UserRepository;
 
@@ -54,7 +55,7 @@ class LikedStatusRepository extends EntityRepository implements ExtremumAwareInt
         $archiveStatusQueryBuilder = $this->createQueryBuilder('l');
         $archiveStatusQueryBuilder->select('COUNT(DISTINCT archivedStatus.hash) as count_')
             ->join('l.archivedStatus', 'archivedStatus')
-            ->andWhere('l.memberName = :memberName');
+            ->andWhere('l.likedByMemberName = :memberName');
         $archiveStatusQueryBuilder->setParameter('memberName', $memberName);
 
         if ($maxId < INF) {
@@ -95,7 +96,7 @@ class LikedStatusRepository extends EntityRepository implements ExtremumAwareInt
 
         $statusQueryBuilder->select('COUNT(DISTINCT status.hash) as count_')
             ->join('l.'.$joinColumn, 'status')
-            ->andWhere('l.memberName = :memberName');
+            ->andWhere('l.likedByMemberName = :memberName');
         $statusQueryBuilder->setParameter('memberName', $memberName);
 
         if ($maxId < INF) {
@@ -172,7 +173,7 @@ class LikedStatusRepository extends EntityRepository implements ExtremumAwareInt
         $queryBuilder = $this->createQueryBuilder('l');
         $queryBuilder->select('s.statusId')
             ->join('l.status', 's')
-            ->andWhere('l.memberName = :memberName')
+            ->andWhere('l.likedByMemberName = :memberName')
             ->orderBy('s.statusId + 0', $direction)
             ->setMaxResults(1);
 
@@ -240,7 +241,7 @@ class LikedStatusRepository extends EntityRepository implements ExtremumAwareInt
         $queryBuilder = $this->createQueryBuilder('l');
         $queryBuilder->select('s.statusId')
             ->join('l.archivedStatus', 's')
-            ->andWhere('l.memberName = :memberName')
+            ->andWhere('l.likedByMemberName = :memberName')
             ->orderBy('s.statusId + 0', $direction)
             ->setMaxResults(1);
 
@@ -282,28 +283,41 @@ class LikedStatusRepository extends EntityRepository implements ExtremumAwareInt
 
     /**
      * @param MemberInterface $member
-     * @param StatusInterface $memberStatus
+     * @param StatusInterface $status
      * @param MemberInterface $likedBy
+     * @param Aggregate       $aggregate
      * @return LikedStatus
      */
     public function ensureMemberStatusHasBeenMarkedAsLikedBy(
         MemberInterface $member,
         StatusInterface $status,
-        MemberInterface $likedBy
+        MemberInterface $likedBy,
+        Aggregate $aggregate
     ): LikedStatus {
+        $likedStatus = $this->findOneBy([
+            'status' => $status,
+            'likedBy' => $likedBy,
+            'member' => $member,
+            'aggregate' => $aggregate
+        ]);
+        if ($likedStatus instanceof LikedStatus) {
+            return $likedStatus;
+        }
+
         $likedStatus = $this->findOneBy([
             'status' => $status,
             'likedBy' => $likedBy,
             'member' => $member
         ]);
         if ($likedStatus instanceof LikedStatus) {
-            return $likedStatus;
+            return $likedStatus->setAggregate($aggregate);
         }
 
         return $this->fromMemberStatus(
             $status,
             $likedBy,
-            $member
+            $member,
+            $aggregate
         );
     }
 
@@ -311,14 +325,16 @@ class LikedStatusRepository extends EntityRepository implements ExtremumAwareInt
      * @param StatusInterface $memberStatus
      * @param MemberInterface $likedBy
      * @param MemberInterface $member
+     * @param Aggregate       $aggregate
      * @return LikedStatus
      */
     private function fromMemberStatus(
         StatusInterface $memberStatus,
         MemberInterface $likedBy,
-        MemberInterface $member
+        MemberInterface $member,
+        Aggregate $aggregate
     ) {
-        return new LikedStatus($memberStatus, $likedBy, $member);
+        return new LikedStatus($memberStatus, $likedBy, $aggregate, $member);
     }
 
     /**
@@ -333,4 +349,49 @@ class LikedStatusRepository extends EntityRepository implements ExtremumAwareInt
 
         return $likedStatus;
     }
+
+    /**
+     * @param \stdClass $status
+     * @param string    $aggregateName
+     * @param string    $likedByMemberName
+     * @param string    $memberName
+     * @return bool
+     * @throws \Doctrine\DBAL\DBALException
+     */
+    public function hasBeenSavedBefore(
+        \stdClass $status,
+        string $aggregateName,
+        string $likedByMemberName,
+        string $memberName
+    ): bool
+    {
+        $query = <<<QUERY
+            SELECT (count(*) > 0) status_has_been_saved_before
+            FROM liked_status
+            INNER JOIN weaving_status status
+            WHERE ust_status_id = :status_id
+            AND liked_status.status_id = status.ust_id
+            AND liked_by_member_name = :liked_by_member_name
+            AND aggregate_name = :aggregate_name
+            AND member_name = :member_name
+QUERY
+;
+
+        $connection = $this->getEntityManager()->getConnection();
+        $statement = $connection->executeQuery(
+            strtr(
+                $query,
+                [
+                    ':status_id' => intval($status->id_str),
+                    ':aggregate_name' => $connection->quote($aggregateName),
+                    ':liked_by_member_name' => $connection->quote($likedByMemberName),
+                    ':member_name' => $connection->quote($memberName),
+                ]
+            )
+        );
+        $results = $statement->fetchAll()[0];
+
+        return boolval($results['status_has_been_saved_before']);
+    }
+
 }

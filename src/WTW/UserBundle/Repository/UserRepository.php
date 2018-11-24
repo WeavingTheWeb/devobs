@@ -2,6 +2,7 @@
 
 namespace WTW\UserBundle\Repository;
 
+use App\Member\MemberInterface;
 use Doctrine\ORM\EntityRepository;
 
 use WeavingTheWeb\Bundle\TwitterBundle\Exception\NotFoundMemberException;
@@ -13,25 +14,63 @@ use WTW\UserBundle\Entity\User;
 class UserRepository extends EntityRepository
 {
     /**
-     * @param $twitterId
-     * @param $screenName
-     * @param bool|false $protected
-     * @param bool|false $suspended
+     * @param      $twitterId
+     * @param      $screenName
+     * @param bool $protected
+     * @param bool $suspended
+     * @param null $description
+     * @param int  $totalSubscriptions
+     * @param int  $totalSubscribees
      * @return User
      */
-    public function make($twitterId, $screenName, $protected = false, $suspended = false)
-    {
-        $user = new User();
-        $user->setTwitterUsername($screenName);
-        $user->setTwitterID($twitterId);
-        $user->setEnabled(false);
-        $user->setLocked(false);
-        $user->setEmail('@' . $screenName);
-        $user->setEnabled(0);
-        $user->setProtected($protected);
-        $user->setSuspended($suspended);
+    public function make(
+        $twitterId,
+        $screenName,
+        $protected = false,
+        $suspended = false,
+        $description = null,
+        $totalSubscriptions = 0,
+        $totalSubscribees = 0
+    ) {
+        $member = new User();
 
-        return $user;
+        if (is_numeric($twitterId)) {
+            $member->setTwitterID($twitterId);
+        }
+
+        $member->setTwitterUsername($screenName);
+
+        $member->setEnabled(false);
+        $member->setLocked(false);
+        $member->setEmail('@' . $screenName);
+
+        $member->setProtected($protected);
+        $member->setSuspended($suspended);
+        $member->setNotFound(false);
+
+        if (!is_null($description)) {
+            $member->description = $description;
+        }
+
+        $member->totalSubscribees = $totalSubscribees;
+        $member->totalSubscriptions = $totalSubscriptions;
+
+        return $member;
+    }
+
+    /**
+     * @param string|int         $identifier
+     * @param string|null $screenName
+     * @return MemberInterface|null|object|User
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function suspendMemberByScreenNameOrIdentifier($identifier)
+    {
+        if (is_int($identifier)) {
+            return $this->suspendMemberByIdentifier($identifier);
+        }
+
+        return $this->suspendMember($identifier);
     }
 
     /**
@@ -64,14 +103,14 @@ class UserRepository extends EntityRepository
 
     /**
      * @param $screenName
-     * @return null|User
+     * @return MemberInterface|null
      * @throws \Doctrine\ORM\OptimisticLockException
      */
     public function declareUserAsNotFoundByUsername($screenName)
     {
         $user = $this->findOneBy(['twitter_username' => $screenName]);
 
-        if (!$user instanceof User) {
+        if (!$user instanceof MemberInterface) {
             return null;
         }
 
@@ -79,11 +118,27 @@ class UserRepository extends EntityRepository
     }
 
     /**
-     * @param User $user
-     * @return User
+     * @param $screenName
+     * @return MemberInterface|null
      * @throws \Doctrine\ORM\OptimisticLockException
      */
-    public function declareUserAsNotFound(User $user)
+    public function declareMemberAsSuspended(string $screenName)
+    {
+        $member = $this->findOneBy(['twitter_username' => $screenName]);
+
+        if (!$member instanceof User) {
+            return null;
+        }
+
+        return $this->declareMemberAsSuspended($member);
+    }
+
+    /**
+     * @param MemberInterface $user
+     * @return MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function declareUserAsNotFound(MemberInterface $user)
     {
         $user->setNotFound(true);
 
@@ -92,7 +147,7 @@ class UserRepository extends EntityRepository
 
     /**
      * @param User $user
-     * @return User
+     * @return MemberInterface
      * @throws \Doctrine\ORM\OptimisticLockException
      */
     public function declareUserAsFound(User $user)
@@ -103,8 +158,8 @@ class UserRepository extends EntityRepository
     }
 
     /**
-     * @param $screenName
-     * @return User
+     * @param string $screenName
+     * @return MemberInterface
      * @throws \Doctrine\ORM\OptimisticLockException
      */
     public function declareUserAsProtected(string $screenName)
@@ -124,11 +179,11 @@ class UserRepository extends EntityRepository
     }
 
     /**
-     * @param User $member
-     * @return User
+     * @param MemberInterface $member
+     * @return MemberInterface
      * @throws \Doctrine\ORM\OptimisticLockException
      */
-    protected function saveMember(User $member)
+    public function saveMember(MemberInterface $member)
     {
         $entityManager = $this->getEntityManager();
 
@@ -140,9 +195,8 @@ class UserRepository extends EntityRepository
 
     /**
      * @param User $member
-     * @return User
+     * @return MemberInterface
      * @throws \Doctrine\ORM\OptimisticLockException
-     * @deprecated in favor of ->saveMember
      */
     protected function saveUser(User $member)
     {
@@ -152,19 +206,13 @@ class UserRepository extends EntityRepository
     /**
      * @param string $maxStatusId
      * @param string $screenName
-     * @return User
+     * @return MemberInterface
      * @throws NotFoundMemberException
      * @throws \Doctrine\ORM\OptimisticLockException
      */
     public function declareMaxStatusIdForMemberWithScreenName(string $maxStatusId, string $screenName)
     {
-        $member = $this->findOneBy(['twitter_username' => $screenName]);
-        if (!$member instanceof User) {
-            throw new NotFoundMemberException(
-                'Could not find member with screen name "%s"',
-                $screenName
-            );
-        }
+        $member = $this->ensureMemberExists($screenName);
 
         if (is_null($member->maxStatusId) || (intval($maxStatusId) > intval($member->maxStatusId))) {
             $member->maxStatusId = $maxStatusId;
@@ -176,19 +224,13 @@ class UserRepository extends EntityRepository
     /**
      * @param string $minStatusId
      * @param string $screenName
-     * @return User
+     * @return MemberInterface
      * @throws NotFoundMemberException
      * @throws \Doctrine\ORM\OptimisticLockException
      */
     public function declareMinStatusIdForMemberWithScreenName(string $minStatusId, string $screenName)
     {
-        $member = $this->findOneBy(['twitter_username' => $screenName]);
-        if (!$member instanceof User) {
-            throw new NotFoundMemberException(
-                'Could not find member with screen name "%s"',
-                $screenName
-            );
-        }
+        $member = $this->ensureMemberExists($screenName);
 
         if (is_null($member->minStatusId) || (intval($minStatusId) < intval($member->minStatusId))) {
             $member->minStatusId = $minStatusId;
@@ -198,23 +240,72 @@ class UserRepository extends EntityRepository
     }
 
     /**
-     * @param int    $totalStatuses
+     * @param string $maxLikeId
      * @param string $screenName
-     * @return null|object
+     * @return MemberInterface
      * @throws NotFoundMemberException
      * @throws \Doctrine\ORM\OptimisticLockException
      */
-    public function declareTotalStatusesOfMemberWithScreenName(int $totalStatuses, string $screenName) {
-        $member = $this->findOneBy(['twitter_username' => $screenName]);
-        if (!$member instanceof User) {
-            throw new NotFoundMemberException(
-                'Could not find member with screen name "%s"',
-                $screenName
-            );
+    public function declareMaxLikeIdForMemberWithScreenName(string $maxLikeId, string $screenName)
+    {
+        $member = $this->ensureMemberExists($screenName);
+
+        if (is_null($member->maxLikeId) || (intval($maxLikeId) > intval($member->maxLikeId))) {
+            $member->maxLikeId = $maxLikeId;
         }
+
+        return $this->saveMember($member);
+    }
+
+    /**
+     * @param string $minLikeId
+     * @param string $screenName
+     * @return MemberInterface
+     * @throws NotFoundMemberException
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function declareMinLikeIdForMemberWithScreenName(string $minLikeId, string $screenName)
+    {
+        $member = $this->ensureMemberExists($screenName);
+
+        if (is_null($member->minLikeId) || (intval($minLikeId) < intval($member->minLikeId))) {
+            $member->minLikeId = $minLikeId;
+        }
+
+        return $this->saveMember($member);
+    }
+
+    /**
+     * @param int    $totalStatuses
+     * @param string $screenName
+     * @return MemberInterface
+     * @throws NotFoundMemberException
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function declareTotalStatusesOfMemberWithName(int $totalStatuses, string $screenName) {
+        $member = $this->ensureMemberExists($screenName);
 
         if ($totalStatuses > $member->totalStatuses) {
             $member->totalStatuses = $totalStatuses;
+
+            $this->saveMember($member);
+        }
+
+        return $member;
+    }
+
+    /**
+     * @param int    $totalLikes
+     * @param string $memberName
+     * @return MemberInterface
+     * @throws NotFoundMemberException
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function declareTotalLikesOfMemberWithName(int $totalLikes, string $memberName) {
+        $member = $this->ensureMemberExists($memberName);
+
+        if ($totalLikes > $member->totalLikes) {
+            $member->totalLikes = $totalLikes;
 
             $this->saveMember($member);
         }
@@ -229,13 +320,32 @@ class UserRepository extends EntityRepository
      * @throws NotFoundMemberException
      * @throws \Doctrine\ORM\OptimisticLockException
      */
-    public function incrementTotalStatusesOfMemberWithScreenName(int $statusesToBeAdded, string $screenName) {
-        $member = $this->findOneBy(['twitter_username' => $screenName]);
-        if (!$member instanceof User) {
-            NotFoundMemberException::raiseExceptionAboutNotFoundMemberHavingScreenName($screenName);
-        }
+    public function incrementTotalStatusesOfMemberWithName(
+        int $statusesToBeAdded,
+        string $memberName
+    ) {
+        $member = $this->ensureMemberExists($memberName);
 
         $member->totalStatuses = $member->totalStatuses + $statusesToBeAdded;
+        $this->saveMember($member);
+
+        return $member;
+    }
+
+    /**
+     * @param int    $likesToBeAdded
+     * @param string $memberName
+     * @return MemberInterface
+     * @throws NotFoundMemberException
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function incrementTotalLikesOfMemberWithName(
+        int $likesToBeAdded,
+        string $memberName
+    ) {
+        $member = $this->ensureMemberExists($memberName);
+
+        $member->totalLikes = $member->totalLikes + $likesToBeAdded;
         $this->saveMember($member);
 
         return $member;
@@ -252,5 +362,64 @@ class UserRepository extends EntityRepository
         $queryBuilder->andWhere('u.apiKey is not null');
 
         return $queryBuilder->getQuery()->getSingleResult();
+    }
+
+    /**
+     * @param string $memberName
+     * @return MemberInterface
+     * @throws NotFoundMemberException
+     */
+    private function ensureMemberExists(string $memberName)
+    {
+        $member = $this->findOneBy(['twitter_username' => $memberName]);
+        if (!$member instanceof MemberInterface) {
+            NotFoundMemberException::raiseExceptionAboutNotFoundMemberHavingScreenName($memberName);
+        }
+
+        return $member;
+    }
+
+    /**
+     * @param int $identifier
+     * @return MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function suspendMemberByIdentifier(int $identifier)
+    {
+        $suspendedMember = $this->findOneBy(['twitterID' => $identifier]);
+
+        if ($suspendedMember instanceof User) {
+            $suspendedMember->setSuspended(true);
+
+            return $this->saveUser($suspendedMember);
+        }
+
+        $suspendedMember = new User();
+        $suspendedMember->setTwitterUsername($identifier);
+        $suspendedMember->setTwitterID($identifier);
+        $suspendedMember->setEnabled(false);
+        $suspendedMember->setLocked(false);
+        $suspendedMember->setEmail('@' . $identifier);
+        $suspendedMember->setEnabled(0);
+        $suspendedMember->setProtected(false);
+        $suspendedMember->setSuspended(true);
+
+        return $this->saveUser($suspendedMember);
+    }
+
+    /**
+     * @param string $screenName
+     * @return MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
+     */
+    public function declareMemberHavingScreenNameNotFound(string $screenName)
+    {
+        $notFoundMember = $this->make(
+            null,
+            $screenName
+        );
+        $notFoundMember->setNotFound(true);
+
+        return $this->saveMember($notFoundMember);
     }
 }

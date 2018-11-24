@@ -3,6 +3,7 @@
 namespace WeavingTheWeb\Bundle\AmqpBundle\Twitter;
 
 use App\Operation\OperationClock;
+use App\Status\LikedStatusCollectionAwareInterface;
 use Doctrine\ORM\EntityRepository;
 
 use OldSound\RabbitMqBundle\RabbitMq\ConsumerInterface;
@@ -15,8 +16,6 @@ use WeavingTheWeb\Bundle\TwitterBundle\Api\TwitterErrorAwareInterface;
 
 use WeavingTheWeb\Bundle\TwitterBundle\Exception\UnavailableResourceException;
 use WeavingTheWeb\Bundle\TwitterBundle\Exception\ProtectedAccountException;
-
-use WTW\UserBundle\Entity\User;
 
 /**
  * @author Thierry Marianne <thierry.marianne@weaving-the-web.org>
@@ -79,10 +78,6 @@ class UserStatus implements ConsumerInterface
      */
     public function execute(AmqpMessage $message)
     {
-        if ($this->operationClock->shouldSkipOperation()) {
-            return true;
-        }
-
         try {
             $options = $this->parseMessage($message);
         } catch (\Exception $exception) {
@@ -92,10 +87,11 @@ class UserStatus implements ConsumerInterface
         }
 
         $options = [
+            LikedStatusCollectionAwareInterface::INTENT_TO_FETCH_LIKES => $this->extractIntentToCollectLikes($options),
             'aggregate_id' => $this->extractAggregateId($options),
             'before' => $this->extractBeforeOption($options),
-            'oauth' => $options['token'],
             'count' => 200,
+            'oauth' => $options['token'],
             'screen_name' => $options['screen_name'],
         ];
 
@@ -137,16 +133,16 @@ class UserStatus implements ConsumerInterface
 
     /**
      * @param $screenName
-     * @return User
-     * @throws \Exception
+     * @return MemberInterface
+     * @throws \Doctrine\ORM\OptimisticLockException
      */
     public function handleNotFoundUsers($screenName)
     {
-        $user = $this->userRepository->findOneBy(
+        $member = $this->userRepository->findOneBy(
             ['twitter_username' => $screenName]
         );
 
-        if (is_null($user)) {
+        if (!($member instanceof MemberInterface)) {
             $message = sprintf(
                 'User with screen name "%s" could not be found via Twitter API not in database',
                 $screenName
@@ -154,7 +150,7 @@ class UserStatus implements ConsumerInterface
             throw new \Exception($message, self::ERROR_CODE_USER_NOT_FOUND);
         }
 
-        return $this->userRepository->declareUserAsNotFound($user);
+        return $this->userRepository->declareUserAsNotFound($member);
     }
 
     /**
@@ -179,7 +175,9 @@ class UserStatus implements ConsumerInterface
      */
     protected function setupCredentials($tokens)
     {
-        if ((!array_key_exists('token', $tokens) || !array_key_exists('secret', $tokens)) && !array_key_exists('bearer', $tokens)) {
+        if ((!array_key_exists('token', $tokens) ||
+            !array_key_exists('secret', $tokens)) &&
+            !array_key_exists('bearer', $tokens)) {
             throw new \InvalidArgumentException('Valid token and secret are required');
         } else {
             $this->serializer->setupAccessor($tokens);
@@ -199,6 +197,19 @@ class UserStatus implements ConsumerInterface
         }
 
         return $aggregateId;
+    }
+
+    /**
+     * @param array $options
+     * @return bool
+     */
+    protected function extractIntentToCollectLikes(array $options): bool
+    {
+        if (!array_key_exists(LikedStatusCollectionAwareInterface::INTENT_TO_FETCH_LIKES, $options)) {
+            return false;
+        }
+
+        return $options[LikedStatusCollectionAwareInterface::INTENT_TO_FETCH_LIKES];
     }
 
     /**

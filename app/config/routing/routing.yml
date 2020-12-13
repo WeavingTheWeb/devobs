@@ -1,5 +1,0 @@
-weaving_the_web_twitter:
-    prefix:   /api/twitter
-    resource: "@WeavingTheWebTwitterBundle/Controller/"
-    type:     annotation
-
